@@ -1,0 +1,2 @@
+COMPONENT_DEPENDS := Storage SPI
+COMPONENT_INCDIRS := src/include
