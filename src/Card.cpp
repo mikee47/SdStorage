@@ -92,27 +92,27 @@ namespace SD
 {
 size_t CSD::printTo(Print& p) const
 {
-#define XX(tag, ...) p << F(#tag) << " : " << csd->tag() << endl;
+#define XX(tag, ...) p << F(#tag) << " : " << csd.tag() << endl;
 
-	auto csd = this;
+	auto& csd = *this;
 	SDCARD_CSD_MAP_A(XX)
 
 	switch(structure()) {
 	case Structure::v1: {
-		auto csd = static_cast<const CSD1*>(this);
-		p << F("size : ") << csd->size() << endl;
+		auto& csd = v1();
+		p << F("size : ") << csd.size() << endl;
 		SDCARD_CSD_MAP_B1(XX)
 		break;
 	}
 	case Structure::v2: {
-		auto csd = static_cast<const CSD2*>(this);
-		p << F("size : ") << csd->size() << endl;
+		auto& csd = *static_cast<const CSD2*>(this);
+		p << F("size : ") << csd.size() << endl;
 		SDCARD_CSD_MAP_B2(XX)
 		break;
 	}
 	case Structure::v3: {
-		auto csd = static_cast<const CSD3*>(this);
-		p << F("size : ") << csd->size() << endl;
+		auto& csd = *static_cast<const CSD3*>(this);
+		p << F("size : ") << csd.size() << endl;
 		SDCARD_CSD_MAP_B3(XX)
 		break;
 	}

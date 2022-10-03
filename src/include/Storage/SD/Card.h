@@ -63,6 +63,10 @@ namespace SD
 		return Type(readBits(start, len));                                                                             \
 	}
 
+struct CSD1;
+struct CSD2;
+struct CSD3;
+
 struct CSD {
 	uint32_t raw_bits[4];
 
@@ -73,6 +77,27 @@ struct CSD {
 	};
 
 	SDCARD_CSD_MAP_A(XX)
+
+	template <class C> const C& as() const
+	{
+		return *static_cast<const C*>(this);
+	}
+
+	const CSD1& v1() const
+	{
+		return as<CSD1>();
+	}
+
+	const CSD2& v2() const
+	{
+		return as<CSD2>();
+	}
+
+	const CSD3& v3() const
+	{
+		return as<CSD3>();
+	}
+
 	SDCARD_CSD_MAP_C(XX)
 
 	size_t printTo(Print& p) const;
