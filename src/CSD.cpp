@@ -32,4 +32,48 @@ uint64_t CSD::getSize() const
 	}
 }
 
+size_t CSD::printTo(Print& p) const
+{
+	size_t n{0};
+
+#define XX(tag, ...)                                                                                                   \
+	n += p.print(_F(#tag));                                                                                            \
+	n += p.print(" : ");                                                                                               \
+	n += p.println(csd.tag());
+
+	auto& csd = *this;
+	SDCARD_CSD_MAP_A(XX)
+
+	n += p.print(_F("size : "));
+
+	switch(structure()) {
+	case Structure::v1: {
+		auto& csd = v1();
+		n += p.println(csd.size());
+		SDCARD_CSD_MAP_B1(XX)
+		break;
+	}
+	case Structure::v2: {
+		auto& csd = *static_cast<const CSD2*>(this);
+		n += p.println(csd.size());
+		SDCARD_CSD_MAP_B2(XX)
+		break;
+	}
+	case Structure::v3: {
+		auto& csd = *static_cast<const CSD3*>(this);
+		n += p.println(csd.size());
+		SDCARD_CSD_MAP_B3(XX)
+		break;
+	}
+	default:
+		n += p.println(_F("UNKNOWN"));
+	}
+
+	SDCARD_CSD_MAP_C(XX)
+
+#undef XX
+
+	return n;
+}
+
 } // namespace Storage::SD
