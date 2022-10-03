@@ -33,101 +33,30 @@ public:
 		write_blk_missalign : 1;
 		read_blk_misalign : 1;
 		dsr_imp : 1;
-		reserved : 2;
 
+		/////////
+		// Version 1.0
+		reserved : 2;
 		c_size : 12;
 		vdd_r_curr_min : 3;
 		vdd_r_curr_max : 3;
 		vdd_w_curr_min : 3;
 		vdd_w_curr_max : 3;
 		c_size_mult : 3;
+		// Version 2.0
+		reserved : 6;
+		c_size : 22;
+		reserved : 1;
+		// Version 3.0
+		c_size : 28;
+		reserved : 1;
+		/////////
+
 		erase_blk_en : 1;
 		sector_size : 7;
 		wp_grp_size : 7;
 		wp_grp_enable : 1;
 		reserved : 2;
-
-		r2w_factor : 3;
-		write_bl_len : 4;
-		write_bl_partial : 1;
-		reserved : 5;
-
-		file_format_grp : 1;
-		copy : 1;
-		perm_write_protect : 1;
-		tmp_write_protect : 1;
-		file_format : 2;
-		wp_upc : 1;
-		reserved : 1;
-		crc : 7;
-		not_used : 1;
-	};
-
-	// Version 2.0
-	struct __attribute__((packed)) CSD {
-		uint8_t structure : 2; // 0: Version 1.0, 1: Version 2.0, 2: Version 3.0, 3: reserved
-		uint8_t reserved : 6;
-
-		uint8_t taac;
-		uint8_t nsac;
-		uint8_t tran_speed;
-
-		ccc : 12;
-		read_bl_len : 4;
-
-		read_bl_partial : 1;
-		write_blk_missalign : 1;
-		read_blk_misalign : 1;
-		dsr_imp : 1;
-		reserved : 6;
-		c_size: 22;
-		reserved: 1;
-		erase_blk_len: 1;
-		erase_blk_en: 1;
-		sector_size: 7;
-		wp_grp_size: 7;
-		wp_grp_enable: 1;
-		reserved: 2;
-
-		r2w_factor : 3;
-		write_bl_len : 4;
-		write_bl_partial : 1;
-		reserved : 5;
-
-		file_format_grp : 1;
-		copy : 1;
-		perm_write_protect : 1;
-		tmp_write_protect : 1;
-		file_format : 2;
-		wp_upc : 1;
-		reserved : 1;
-		crc : 7;
-		not_used : 1;
-	};
-
-	// Version 3.0
-	struct __attribute__((packed)) CSD {
-		uint8_t structure : 2; // 0: Version 1.0, 1: Version 2.0, 2: Version 3.0, 3: reserved
-		uint8_t reserved : 6;
-
-		uint8_t taac;
-		uint8_t nsac;
-		uint8_t tran_speed;
-
-		ccc : 12;
-		read_bl_len : 4;
-
-		read_bl_partial : 1;
-		write_blk_missalign : 1;
-		read_blk_misalign : 1;
-		dsr_imp : 1;
-		c_size: 28;
-
-		erase_blk_en: 1;
-		sector_size: 7;
-		wp_grp_size: 7;
-		wp_grp_enable: 1;
-		reserved: 2;
 
 		r2w_factor : 3;
 		write_bl_len : 4;
