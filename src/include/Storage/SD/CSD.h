@@ -1,3 +1,8 @@
+/*
+	CSD register bit alignment is awkward, so borrowed the approach taken by linux
+	from https://github.com/torvalds/linux/blob/master/drivers/mmc/core/sd.c
+*/
+
 #pragma once
 
 #include <Print.h>
@@ -102,9 +107,10 @@ struct CSD {
 	size_t printTo(Print& p) const;
 
 protected:
+	// This is our version of linux' `UNSTUFF_BITS` macro
 	uint32_t readBits(uint8_t start, uint8_t size) const
 	{
-		const uint32_t mask = (size < 32 ? 1 << size : 0) - 1;
+		const uint32_t mask = (size < 32 ? 1U << size : 0) - 1U;
 		const unsigned off = 3 - (start / 32);
 		const unsigned shift = start & 31;
 		uint32_t res = raw_bits[off] >> shift;
