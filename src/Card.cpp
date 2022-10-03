@@ -38,8 +38,6 @@ Descr: Low-level SDCard functions
 #include <Clock.h>
 #include <debug_progmem.h>
 
-#define SECTOR_SIZE 512
-
 /* MMC/SD command (SPI mode) */
 #define CMD0 (0)		   /* GO_IDLE_STATE */
 #define CMD1 (1)		   /* SEND_OP_COND */
@@ -74,9 +72,9 @@ namespace Storage
 {
 namespace SD
 {
-/*-----------------------------------------------------------------------*/
-/* Wait for card ready                                                   */
-/*-----------------------------------------------------------------------*/
+/*
+ * Wait for card ready
+ */
 bool Card::wait_ready() /* 1:OK, 0:Timeout */
 {
 	for(unsigned tmr = 5000; tmr; tmr--) { /* Wait for ready in timeout of 500ms */
@@ -90,21 +88,21 @@ bool Card::wait_ready() /* 1:OK, 0:Timeout */
 	return false;
 }
 
-/*-----------------------------------------------------------------------*/
-/* Deselect the card and release SPI bus                                 */
-/*-----------------------------------------------------------------------*/
-
+/*
+ * Deselect the card and release SPI bus
+ */
 void Card::deselect()
 {
 	digitalWrite(chipSelect, HIGH);
 	spi.transfer(0xff); /* Send 0xFF Dummy clock (force DO hi-z for multiple slave SPI) */
 }
 
-/*-----------------------------------------------------------------------*/
-/* Select the card and wait for ready                                    */
-/*-----------------------------------------------------------------------*/
-
-bool Card::select() /* 1:OK, 0:Timeout */
+/**
+ * Select the card and wait for ready
+ *
+ * Returns true: OK, false: Timeout
+ */
+bool Card::select()
 {
 	digitalWrite(chipSelect, LOW);
 	spi.transfer(0xff); /* Dummy clock (force DO enabled) */
@@ -112,7 +110,7 @@ bool Card::select() /* 1:OK, 0:Timeout */
 		return true;
 	}
 
-	debug_e("SDCard select() failed");
+	debug_e("[SD] select() failed");
 	deselect();
 	return false;
 }
@@ -149,14 +147,14 @@ bool Card::rcvr_datablock(void* buff, size_t btr)
 bool Card::xmit_datablock(const void* buff, uint8_t token)
 {
 	if(!wait_ready()) {
-		debug_e("[SDCard] wait_ready failed");
+		debug_e("[SD] wait_ready failed");
 		return false;
 	}
 
 	spi.transfer(token); /* Xmit a token */
 	if(token != 0xFD) {  /* Is it data token? */
 		// Data gets modified so take a copy
-		uint8_t buffer[SECTOR_SIZE];
+		uint8_t buffer[sectorSize];
 		memcpy(buffer, buff, sizeof(buffer));
 		spi.transfer(buffer, sizeof(buffer)); /* Xmit the 512 byte data block to MMC */
 
@@ -176,7 +174,7 @@ bool Card::xmit_datablock(const void* buff, uint8_t token)
 /*
  * Send a command packet to the card
  *
- * @retval uint8_t Command response (bit7: Send failed)
+ * Returns Command response (bit7: Send failed)
  */
 uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg)
 {
@@ -184,7 +182,7 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg)
 		cmd &= 0x7F;
 		uint8_t n = send_cmd(CMD55, 0);
 		if(n > 1) {
-			debug_e("[SDCard] CMD55 error, n = 0x%02x", n);
+			debug_e("[SD] CMD55 error, n = 0x%02x", n);
 			return n;
 		}
 	}
@@ -193,7 +191,7 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg)
 	if(cmd != CMD12) {
 		deselect();
 		if(!select()) {
-			debug_e("[SDCard] Select failed");
+			debug_e("[SD] Select failed");
 			return 0xFF;
 		}
 	}
@@ -230,7 +228,7 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg)
 		d = spi.transfer(0xff);
 	} while((d & 0x80) && --n);
 
-	//	debug_i("SDcard send_cmd %u -> %u (%u try)", cmd, d, n);
+	//	debug_i("[SD] send_cmd %u -> %u (%u try)", cmd, d, n);
 	return d; /* Return with the response value */
 }
 
@@ -246,7 +244,7 @@ bool Card::begin(uint8_t chipSelect, uint32_t freq)
 	digitalWrite(chipSelect, HIGH);
 
 	if(!spi.begin()) {
-		debug_e("SDCard SPI init failed");
+		debug_e("[SD] SPI init failed");
 		return false;
 	}
 
@@ -262,10 +260,10 @@ bool Card::begin(uint8_t chipSelect, uint32_t freq)
 	cardType = init();
 
 	if(cardType == 0) {
-		debug_e("SDCard init FAIL");
+		debug_e("[SD] init FAIL");
 	} else {
 		initialised = true;
-		debug_i("SDCard OK: TYPE %u", cardType);
+		debug_i("[SD] OK: TYPE %u", cardType);
 	}
 
 	deselect();
@@ -279,34 +277,32 @@ bool Card::begin(uint8_t chipSelect, uint32_t freq)
 
 uint8_t Card::init()
 {
-	debug_i("disk_initialize: send 80 0xFF cycles");
+	// init send 0xFF x 80
 	uint8_t tmp[80 / 8];
 	memset(tmp, 0xff, sizeof(tmp));
 	spi.transfer(tmp, sizeof(tmp));
 
-	//	debug_i("disk_initialize: send n send_cmd(CMD0, 0)");
+	// send n send_cmd(CMD0, 0)");
 	uint8_t retCmd;
 	uint8_t n = 5;
 	do {
 		retCmd = send_cmd(CMD0, 0);
 		n--;
 	} while(n && retCmd != 1);
-	debug_i("disk_initialize: until n = 5 && ret != 1");
 
 	if(retCmd != 1) {
-		debug_e("SDCard ERROR: %x", retCmd);
+		debug_e("[SD] ERROR: %x", retCmd);
 		return 0;
 	}
 
 	uint8_t ty = 0;
 
-	debug_i("disk_initialize: Enter Idle state, send_cmd(CMD8, 0x1AA) == 1");
-	/* Enter Idle state */
+	// Enter Idle state
 	if(send_cmd(CMD8, 0x1AA) == 1) { /* SDv2? */
-		debug_i("[SDCard] Sdv2 ?");
+		debug_i("[SD] Sdv2 ?");
 		uint8_t buf[4]{0xff, 0xff, 0xff, 0xff};
 		spi.transfer(buf, sizeof(buf));
-		debug_hex(INFO, "[SDCard]", buf, sizeof(buf));
+		debug_hex(INFO, "[SD]", buf, sizeof(buf));
 
 		// Check card can work at vdd range of 2.7-3.6V
 		if(buf[2] != 0x01 || buf[3] != 0xAA) {
@@ -314,16 +310,17 @@ uint8_t Card::init()
 			return 0;
 		}
 
+		// Wait for leaving idle state (ACMD41 with HCS bit)
 		unsigned tmr;
-		for(tmr = 1000; tmr; tmr--) { /* Wait for leaving idle state (ACMD41 with HCS bit) */
+		for(tmr = 1000; tmr; tmr--) {
 			if(send_cmd(ACMD41, 1UL << 30) == 0) {
-				debug_i("[SDCard] ACMD41 OK");
+				debug_d("[SD] ACMD41 OK");
 				break;
 			}
 			delayMicroseconds(1000);
 		}
 		if(tmr == 0) {
-			debug_i("[SDCard] ACMD41 FAIL");
+			debug_e("[SD] ACMD41 FAIL");
 			return 0;
 		}
 
@@ -336,10 +333,10 @@ uint8_t Card::init()
 		memset(buf, 0xFF, sizeof(buf));
 		spi.transfer(buf, sizeof(buf));
 		ty = (buf[0] & 0x40) ? CT_SD2 | CT_BLOCK : CT_SD2; /* SDv2 */
-		debug_hex(INFO, "[SDCard]", buf, sizeof(buf));
+		debug_hex(INFO, "[SD]", buf, sizeof(buf));
 
 	} else { /* SDv1 or MMCv3 */
-		debug_i("[SDCard] Sdv1 / MMCv3 ?");
+		debug_i("[SD] Sdv1 / MMCv3 ?");
 		uint8_t cmd;
 		if(send_cmd(ACMD41, 0) <= 1) {
 			ty = CT_SD1;
@@ -356,12 +353,12 @@ uint8_t Card::init()
 			delayMicroseconds(1000);
 		}
 		if(tmr == 0) {
-			debug_i("[SDCard] tmr = 0");
+			debug_i("[SD] tmr = 0");
 			return 0;
 		}
 		/* Set R/W block length to 512 */
-		if(send_cmd(CMD16, getBlockSize()) != 0) {
-			debug_i("[SDCard] CMD16 != 0");
+		if(send_cmd(CMD16, sectorSize) != 0) {
+			debug_i("[SD] CMD16 != 0");
 			return 0;
 		}
 	}
@@ -373,8 +370,8 @@ uint8_t Card::init()
 		debug_e("[SD] Read CSD failed");
 		return 0;
 	}
-
 	mCSD.bswap();
+
 	uint64_t size = mCSD.getSize();
 #ifndef ENABLE_STORAGE_SIZE64
 	if(isSize64(size)) {
@@ -382,7 +379,7 @@ uint8_t Card::init()
 		return 0;
 	}
 #endif
-	sectorCount = size >> sectorSizeBits;
+	sectorCount = size >> sectorSizeShift;
 	if(sectorCount == 0) {
 		debug_e("[SD] Size invalid %llu", size);
 		return 0;
@@ -392,8 +389,8 @@ uint8_t Card::init()
 		debug_e("[SD] Read CID failed");
 		return 0;
 	}
-
 	mCID.bswap();
+
 	return ty;
 }
 
@@ -403,26 +400,26 @@ bool Card::read(storage_size_t address, void* dst, size_t size)
 		return false;
 	}
 
-	if(address % SECTOR_SIZE != 0 || size % SECTOR_SIZE != 0 || size == 0) {
-		debug_e("[SDIO] Read must be whole sectors");
+	if(address % sectorSize != 0 || size % sectorSize != 0 || size == 0) {
+		debug_e("[SD] Read must be whole sectors");
 		return false;
 	}
 
 	// Convert byte address to sector number for block devices
 	if(cardType & CT_BLOCK) {
-		address /= SECTOR_SIZE;
+		address >>= sectorSizeShift;
 	}
 
-	auto blockCount = size / SECTOR_SIZE;
+	auto blockCount = size >> sectorSizeShift;
 	uint8_t cmd = (blockCount > 1) ? CMD18 : CMD17; /*  READ_MULTIPLE_BLOCK : READ_SINGLE_BLOCK */
 	if(send_cmd(cmd, address) == 0) {
 		auto bufptr = static_cast<uint8_t*>(dst);
 		do {
-			if(!rcvr_datablock(bufptr, SECTOR_SIZE)) {
-				debug_e("[SDCard] rcvr error");
+			if(!rcvr_datablock(bufptr, sectorSize)) {
+				debug_e("[SD] rcvr error");
 				break;
 			}
-			bufptr += SECTOR_SIZE;
+			bufptr += sectorSize;
 			--blockCount;
 		} while(blockCount != 0);
 		if(cmd == CMD18) {
@@ -436,29 +433,29 @@ bool Card::read(storage_size_t address, void* dst, size_t size)
 
 bool Card::write(storage_size_t address, const void* src, size_t size)
 {
-	debug_i("[SDIO] write (%llu, %u)", address, size);
+	debug_i("[SD] write (%llu, %u)", address, size);
 	// m_printHex("READ", src, size);
 
 	if(!initialised) {
 		return false;
 	}
 
-	if(address % SECTOR_SIZE != 0 || size % SECTOR_SIZE != 0 || size == 0) {
-		debug_e("[SDIO] Write must be whole sectors");
+	if(address % sectorSize != 0 || size % sectorSize != 0 || size == 0) {
+		debug_e("[SD] Write must be whole sectors");
 		return false;
 	}
 
 	// Convert byte address to sector number for block devices
 	if(cardType & CT_BLOCK) {
-		address /= SECTOR_SIZE;
+		address >>= sectorSizeShift;
 	}
 
-	auto blockCount = size / SECTOR_SIZE;
+	auto blockCount = size >> sectorSizeShift;
 	if(blockCount == 1) { /* Single block write */
 		if((send_cmd(CMD24, address) == 0) && xmit_datablock(src, 0xFE)) {
 			blockCount = 0;
 		} else {
-			debug_e("[SDCard] CMD24 error");
+			debug_e("[SD] CMD24 error");
 		}
 	} else { /* Multiple block write */
 		if(cardType & CT_SDC) {
@@ -468,15 +465,15 @@ bool Card::write(storage_size_t address, const void* src, size_t size)
 			auto bufptr = static_cast<const uint8_t*>(src);
 			do {
 				if(!xmit_datablock(bufptr, 0xFC)) {
-					debug_e("[SDCard] xmit error");
+					debug_e("[SD] xmit error");
 					break;
 				}
-				bufptr += SECTOR_SIZE;
+				bufptr += sectorSize;
 				--blockCount;
 			} while(blockCount != 0);
 
 			if(!xmit_datablock(0, 0xFD)) { /* STOP_TRAN token */
-				debug_e("[SDCard] STOP_TRAN error");
+				debug_e("[SD] STOP_TRAN error");
 				blockCount = 1;
 			}
 		}

@@ -60,27 +60,34 @@ public:
 
 	size_t getBlockSize() const override
 	{
-		return 1 << sectorSizeBits;
+		return size_t(mCSD.sector_size() + 1) << sectorSizeShift;
 	}
 
 	storage_size_t getSize() const override
 	{
-		return storage_size_t(sectorCount) << sectorSizeBits;
+		return sectorCount << sectorSizeShift;
 	}
 
-	/**
-	 * @brief Get erase block size in sectors
-	 */
-	uint32_t getEraseBlockSize() const
+	storage_size_t getSectorCount() const override
 	{
-		return 128;
+		return sectorCount;
+	}
+
+	uint16_t getSectorSize() const override
+	{
+		return sectorSize;
 	}
 
 	const CID& cid{mCID};
 	const CSD& csd{mCSD};
 
 private:
-	static constexpr uint8_t sectorSizeBits{9}; // 512 bytes per sector
+	/*
+	 * Whilst SD V1.XX permits misaligned and partial block reads, later versions do not
+	 * and require transfers to be aligned to, and in multiples of, 512 bytes.
+	 */
+	static constexpr uint8_t sectorSizeShift{9};
+	static constexpr uint16_t sectorSize{1U << sectorSizeShift};
 
 	uint8_t init();
 	bool wait_ready();

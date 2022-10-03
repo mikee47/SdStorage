@@ -7,6 +7,9 @@
 
 #include <Print.h>
 
+/* CSD register field definitions as per specification */
+
+// Tag, Type, Start Bit, Size
 #define SDCARD_CSD_MAP_A(XX)                                                                                           \
 	XX(structure, Structure, 126, 2)                                                                                   \
 	XX(taac, uint8_t, 112, 8)                                                                                          \
@@ -66,9 +69,27 @@ struct CSD {
 	uint32_t raw_bits[4];
 
 	enum class Structure {
-		v1 = 0, ///< SDC ver 1.XX or MMC
-		v2 = 1, ///< SDC ver 2.XX
-		v3 = 2, ///< SDC ver 3.XX
+		/**
+		 * @brief SDC ver 1.XX or MMC
+		 *
+		 * Standard Capacity (SDSC): capacity <= 2GB
+		 */
+		v1 = 0,
+
+		/**
+		 * @brief SDC ver 2.XX
+		 *
+		 * High Capacity (SDHC): 2GB < capacity <= 2TB
+		 * Extended Capacity (SDXC): 32GB < capacity <= 2TB
+		 */
+		v2 = 1,
+
+		/**
+		 * @brief SDC ver 3.XX
+		 * 
+		 * Ultra Caapacity (SDUC): 2TB < capacity <= 128TB
+		 */
+		v3 = 2,
 	};
 
 	void bswap()
