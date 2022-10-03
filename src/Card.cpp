@@ -421,6 +421,14 @@ bool Card::begin(uint8_t chipSelect, uint32_t freq)
 		}
 	}
 
+	if(ty != 0) {
+		if(send_cmd(CMD10, 0) == 0 && rcvr_datablock(&mCID, sizeof(mCID))) {
+			mCID.bswap();
+		} else {
+			ty = 0;
+		}
+	}
+
 	cardType = ty;
 
 	if(ty == 0) {
@@ -538,28 +546,6 @@ bool Card::sync()
 	bool res = select();
 	deselect();
 	return res;
-}
-
-bool Card::read_cid()
-{
-	if(!initialised) {
-		return false;
-	}
-
-	if(!select()) {
-		return false;
-	}
-
-	bool res = send_cmd(CMD10, 0) == 0 && rcvr_datablock(&mCID, sizeof(mCID));
-
-	deselect();
-
-	if(!res) {
-		return false;
-	}
-
-	mCID.bswap();
-	return true;
 }
 
 } // namespace SD
