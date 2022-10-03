@@ -74,7 +74,7 @@ namespace Storage
 {
 namespace SD
 {
-size_t Card::ID::printTo(Print& p) const
+size_t Card::CID::printTo(Print& p) const
 {
 	size_t n{0};
 
@@ -500,7 +500,7 @@ bool Card::sync()
 	return res;
 }
 
-bool Card::read_cid(ID& cid)
+bool Card::read_cid(CID& cid)
 {
 	if(!initialised) {
 		return false;

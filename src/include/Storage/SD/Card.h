@@ -28,7 +28,7 @@ public:
 		1a 01               MDT    0000 0001 0001 1010
 		b9                  CRC7: 0x5C
 	*/
-	struct __attribute__((packed)) ID {
+	struct __attribute__((packed)) CID {
 		uint8_t mid;		  ///< Manufacturer ID
 		char oid[2];		  ///< OEM / Application ID
 		char pnm[5];		  ///< Product name
@@ -66,7 +66,7 @@ public:
 
 		size_t printTo(Print& p) const;
 	};
-	static_assert(sizeof(ID) == 16, "Bad CID struct");
+	static_assert(sizeof(CID) == 16, "Bad CID struct");
 
 	Card(SPIBase& spi) : Device(), spi(spi)
 	{
@@ -79,7 +79,7 @@ public:
 	 */
 	bool begin(uint8_t chipSelect, uint32_t freq = 0);
 
-	bool read_cid(ID& cid);
+	bool read_cid(CID& cid);
 
 	/* Storage Device methods */
 
@@ -116,7 +116,7 @@ public:
 
 	storage_size_t getSize() const override
 	{
-		return uint64_t(sectorCount) << sectorSizeBits;
+		return storage_size_t(sectorCount) << sectorSizeBits;
 	}
 
 	/**
