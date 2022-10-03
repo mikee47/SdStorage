@@ -17,52 +17,52 @@ namespace SD
 class Card : public Device
 {
 public:
-	// Version 1.0
 	struct __attribute__((packed)) CSD {
+		// 0x00
 		uint8_t structure : 2; // 0: Version 1.0, 1: Version 2.0, 2: Version 3.0, 3: reserved
 		uint8_t reserved : 6;
 
 		uint8_t taac;
 		uint8_t nsac;
 		uint8_t tran_speed;
-
+		// 0x04
 		ccc : 12;
 		read_bl_len : 4;
-
+		// 0x06
 		read_bl_partial : 1;
 		write_blk_missalign : 1;
 		read_blk_misalign : 1;
 		dsr_imp : 1;
 
-		/////////
+		///////// 29 bits
 		// Version 1.0
-		reserved : 2;
-		c_size : 12;
-		vdd_r_curr_min : 3;
-		vdd_r_curr_max : 3;
-		vdd_w_curr_min : 3;
-		vdd_w_curr_max : 3;
-		c_size_mult : 3;
+		reserved : 2;		// 4
+		c_size : 12;		// 6
+		vdd_r_curr_min : 3; // 18
+		vdd_r_curr_max : 3; // 21
+		vdd_w_curr_min : 3; // 24
+		vdd_w_curr_max : 3; // 27
+		c_size_mult : 3;	// 30
 		// Version 2.0
-		reserved : 6;
-		c_size : 22;
-		reserved : 1;
+		reserved : 6; // 4
+		c_size : 22;  // 10
+		reserved : 1; // 32
 		// Version 3.0
-		c_size : 28;
-		reserved : 1;
+		c_size : 28;  // 4
+		reserved : 1; // 32
 		/////////
 
 		erase_blk_en : 1;
 		sector_size : 7;
 		wp_grp_size : 7;
+		// 0x0C
 		wp_grp_enable : 1;
 		reserved : 2;
-
 		r2w_factor : 3;
 		write_bl_len : 4;
 		write_bl_partial : 1;
 		reserved : 5;
-
+		// 0x0E
 		file_format_grp : 1;
 		copy : 1;
 		perm_write_protect : 1;
@@ -70,6 +70,7 @@ public:
 		file_format : 2;
 		wp_upc : 1;
 		reserved : 1;
+		// 0x0F
 		crc : 7;
 		not_used : 1;
 	};
