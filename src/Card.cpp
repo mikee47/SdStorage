@@ -70,22 +70,6 @@ Descr: Low-level SDCard functions
 #define CT_SDC (CT_SD1 | CT_SD2) /* SD */
 #define CT_BLOCK 0x08			 /* Block addressing */
 
-String toString(Storage::SD::CSD::Structure structure)
-{
-	using Structure = Storage::SD::CSD::Structure;
-
-	switch(structure) {
-	case Structure::v1:
-		return "v1";
-	case Structure::v2:
-		return "v2";
-	case Structure::v3:
-		return "v3";
-	default:
-		return F("INVALID");
-	}
-}
-
 namespace Storage
 {
 namespace SD
