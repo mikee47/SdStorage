@@ -259,6 +259,26 @@ bool Card::begin(uint8_t chipSelect, uint32_t freq)
 
 	delayMicroseconds(10000);
 
+	cardType = init();
+
+	if(cardType == 0) {
+		debug_e("SDCard init FAIL");
+	} else {
+		initialised = true;
+		debug_i("SDCard OK: TYPE %u", cardType);
+	}
+
+	deselect();
+
+	if(initialised) {
+		Disk::scanPartitions(*this);
+	}
+
+	return initialised;
+}
+
+uint8_t Card::init()
+{
 	debug_i("disk_initialize: send 80 0xFF cycles");
 	uint8_t tmp[80 / 8];
 	memset(tmp, 0xff, sizeof(tmp));
@@ -273,110 +293,108 @@ bool Card::begin(uint8_t chipSelect, uint32_t freq)
 	} while(n && retCmd != 1);
 	debug_i("disk_initialize: until n = 5 && ret != 1");
 
-	uint8_t ty = 0;
-	if(retCmd == 1) {
-		debug_i("disk_initialize: Enter Idle state, send_cmd(CMD8, 0x1AA) == 1");
-		/* Enter Idle state */
-		if(send_cmd(CMD8, 0x1AA) == 1) { /* SDv2? */
-			debug_i("[SDCard] Sdv2 ?");
-			uint8_t buf[4]{0xff, 0xff, 0xff, 0xff};
-			spi.transfer(buf, sizeof(buf));
-			debug_hex(INFO, "[SDCard]", buf, sizeof(buf));
-			if(buf[2] == 0x01 && buf[3] == 0xAA) { /* The card can work at vdd range of 2.7-3.6V */
-				unsigned tmr;
-				for(tmr = 1000; tmr; tmr--) { /* Wait for leaving idle state (ACMD41 with HCS bit) */
-					if(send_cmd(ACMD41, 1UL << 30) == 0) {
-						debug_i("[SDCard] ACMD41 OK");
-						break;
-					}
-					delayMicroseconds(1000);
-				}
-				if(tmr == 0) {
-					debug_i("[SDCard] ACMD41 FAIL");
-				}
-				if(tmr != 0 && send_cmd(CMD58, 0) == 0) { /* Check CCS bit in the OCR */
-														  //					spi.setMOSI(HIGH); /* Send 0xFF */
-														  //					spi.recv(buf, 4);
-					//					ty = (buf[0] & 0x40) ? CT_SD2 | CT_BLOCK : CT_SD2;	/* SDv2 */
-					memset(buf, 0xFF, sizeof(buf));
-					spi.transfer(buf, sizeof(buf));
-					ty = (buf[0] & 0x40) ? CT_SD2 | CT_BLOCK : CT_SD2; /* SDv2 */
-					debug_hex(INFO, "[SDCard]", buf, sizeof(buf));
-				}
-			}
-		} else { /* SDv1 or MMCv3 */
-			debug_i("[SDCard] Sdv1 / MMCv3 ?");
-			uint8_t cmd;
-			if(send_cmd(ACMD41, 0) <= 1) {
-				ty = CT_SD1;
-				cmd = ACMD41; /* SDv1 */
-			} else {
-				ty = CT_MMC;
-				cmd = CMD1; /* MMCv3 */
-			}
-			unsigned tmr;
-			for(tmr = 1000; tmr; tmr--) { /* Wait for leaving idle state */
-				if(send_cmd(cmd, 0) == 0) {
-					break;
-				}
-				delayMicroseconds(1000);
-			}
-			/* Set R/W block length to 512 */
-			if(tmr == 0 || send_cmd(CMD16, getBlockSize()) != 0) {
-				debug_i("[SDCard] tmr = 0 || CMD16 != 0");
-				ty = 0;
-			}
-		}
-	} else {
+	if(retCmd != 1) {
 		debug_e("SDCard ERROR: %x", retCmd);
+		return 0;
+	}
+
+	uint8_t ty = 0;
+
+	debug_i("disk_initialize: Enter Idle state, send_cmd(CMD8, 0x1AA) == 1");
+	/* Enter Idle state */
+	if(send_cmd(CMD8, 0x1AA) == 1) { /* SDv2? */
+		debug_i("[SDCard] Sdv2 ?");
+		uint8_t buf[4]{0xff, 0xff, 0xff, 0xff};
+		spi.transfer(buf, sizeof(buf));
+		debug_hex(INFO, "[SDCard]", buf, sizeof(buf));
+
+		// Check card can work at vdd range of 2.7-3.6V
+		if(buf[2] != 0x01 || buf[3] != 0xAA) {
+			debug_e("[SD] VDD invalid");
+			return 0;
+		}
+
+		unsigned tmr;
+		for(tmr = 1000; tmr; tmr--) { /* Wait for leaving idle state (ACMD41 with HCS bit) */
+			if(send_cmd(ACMD41, 1UL << 30) == 0) {
+				debug_i("[SDCard] ACMD41 OK");
+				break;
+			}
+			delayMicroseconds(1000);
+		}
+		if(tmr == 0) {
+			debug_i("[SDCard] ACMD41 FAIL");
+			return 0;
+		}
+
+		// Check CCS bit in the OCR
+		if(send_cmd(CMD58, 0) != 0) {
+			debug_e("[SD] OCR read failed");
+			return 0;
+		}
+
+		memset(buf, 0xFF, sizeof(buf));
+		spi.transfer(buf, sizeof(buf));
+		ty = (buf[0] & 0x40) ? CT_SD2 | CT_BLOCK : CT_SD2; /* SDv2 */
+		debug_hex(INFO, "[SDCard]", buf, sizeof(buf));
+
+	} else { /* SDv1 or MMCv3 */
+		debug_i("[SDCard] Sdv1 / MMCv3 ?");
+		uint8_t cmd;
+		if(send_cmd(ACMD41, 0) <= 1) {
+			ty = CT_SD1;
+			cmd = ACMD41; /* SDv1 */
+		} else {
+			ty = CT_MMC;
+			cmd = CMD1; /* MMCv3 */
+		}
+		unsigned tmr;
+		for(tmr = 1000; tmr; tmr--) { /* Wait for leaving idle state */
+			if(send_cmd(cmd, 0) == 0) {
+				break;
+			}
+			delayMicroseconds(1000);
+		}
+		if(tmr == 0) {
+			debug_i("[SDCard] tmr = 0");
+			return 0;
+		}
+		/* Set R/W block length to 512 */
+		if(send_cmd(CMD16, getBlockSize()) != 0) {
+			debug_i("[SDCard] CMD16 != 0");
+			return 0;
+		}
 	}
 
 	// Get number of sectors on the disk
-	if(ty != 0) {
-		if(send_cmd(CMD9, 0) == 0 && rcvr_datablock(&mCSD, sizeof(mCSD))) {
-			mCSD.bswap();
-			uint64_t size = mCSD.getSize();
+	assert(ty != 0);
+
+	if(send_cmd(CMD9, 0) != 0 || !rcvr_datablock(&mCSD, sizeof(mCSD))) {
+		debug_e("[SD] Read CSD failed");
+		return 0;
+	}
+
+	mCSD.bswap();
+	uint64_t size = mCSD.getSize();
 #ifndef ENABLE_STORAGE_SIZE64
-			if(isSize64(size)) {
-				debug_e("[SD] Device size %llu requires ENABLE_STORAGE_SIZE64=1", size);
-				sectorCount = 0;
-			} else
+	if(isSize64(size)) {
+		debug_e("[SD] Device size %llu requires ENABLE_STORAGE_SIZE64=1", size);
+		return 0;
+	}
 #endif
-			{
-				sectorCount = size >> sectorSizeBits;
-			}
-			if(sectorCount == 0) {
-				ty = 0;
-			}
-		} else {
-			ty = 0;
-		}
+	sectorCount = size >> sectorSizeBits;
+	if(sectorCount == 0) {
+		debug_e("[SD] Size invalid %llu", size);
+		return 0;
 	}
 
-	if(ty != 0) {
-		if(send_cmd(CMD10, 0) == 0 && rcvr_datablock(&mCID, sizeof(mCID))) {
-			mCID.bswap();
-		} else {
-			ty = 0;
-		}
+	if(send_cmd(CMD10, 0) != 0 || !rcvr_datablock(&mCID, sizeof(mCID))) {
+		debug_e("[SD] Read CID failed");
+		return 0;
 	}
 
-	cardType = ty;
-
-	if(ty == 0) {
-		debug_e("SDCard init FAIL");
-	} else {
-		initialised = true;
-		debug_i("SDCard OK: TYPE %u", ty);
-	}
-
-	deselect();
-
-	if(initialised) {
-		Disk::scanPartitions(*this);
-	}
-
-	return initialised;
+	mCID.bswap();
+	return ty;
 }
 
 bool Card::read(storage_size_t address, void* dst, size_t size)

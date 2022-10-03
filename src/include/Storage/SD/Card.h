@@ -82,6 +82,7 @@ public:
 private:
 	static constexpr uint8_t sectorSizeBits{9}; // 512 bytes per sector
 
+	uint8_t init();
 	bool wait_ready();
 	void deselect();
 	bool select();
