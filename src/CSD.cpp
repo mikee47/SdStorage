@@ -15,3 +15,21 @@ String toString(Storage::SD::CSD::Structure structure)
 		return F("INVALID");
 	}
 }
+
+namespace Storage::SD
+{
+uint64_t CSD::getSize() const
+{
+	switch(structure()) {
+	case CSD::Structure::v1:
+		return v1().size();
+	case CSD::Structure::v2:
+		return v2().size();
+	case CSD::Structure::v3:
+		return v3().size();
+	default:
+		return 0;
+	}
+}
+
+} // namespace Storage::SD

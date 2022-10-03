@@ -45,9 +45,7 @@
 	XX(wp_upc, bool, 9, 1)                                                                                             \
 	XX(crc, uint8_t, 1, 7)
 
-namespace Storage
-{
-namespace SD
+namespace Storage::SD
 {
 #define XX(tag, Type, start, len, ...)                                                                                 \
 	Type tag() const                                                                                                   \
@@ -67,6 +65,13 @@ struct CSD {
 		v2 = 1, ///< SDC ver 2.XX
 		v3 = 2, ///< SDC ver 3.XX
 	};
+
+	void bswap()
+	{
+		for(auto& w : raw_bits) {
+			w = __builtin_bswap32(w);
+		}
+	}
 
 	SDCARD_CSD_MAP_A(XX)
 
@@ -90,6 +95,8 @@ struct CSD {
 		return as<CSD3>();
 	}
 
+	uint64_t getSize() const;
+
 	SDCARD_CSD_MAP_C(XX)
 
 	size_t printTo(Print& p) const;
@@ -100,9 +107,9 @@ protected:
 		const uint32_t mask = (size < 32 ? 1 << size : 0) - 1;
 		const unsigned off = 3 - (start / 32);
 		const unsigned shift = start & 31;
-		uint32_t res = __builtin_bswap32(raw_bits[off]) >> shift;
+		uint32_t res = raw_bits[off] >> shift;
 		if(size + shift > 32) {
-			res |= __builtin_bswap32(raw_bits[off - 1]) << ((32 - shift) % 32);
+			res |= raw_bits[off - 1] << ((32 - shift) % 32);
 		}
 		return res & mask;
 	}
@@ -137,7 +144,6 @@ struct CSD3 : public CSD {
 
 #undef XX
 
-} // namespace SD
-} // namespace Storage
+} // namespace Storage::SD
 
 String toString(Storage::SD::CSD::Structure structure);

@@ -399,24 +399,21 @@ bool Card::begin(uint8_t chipSelect, uint32_t freq)
 		debug_e("SDCard ERROR: %x", retCmd);
 	}
 
-	// Get number of sectors on the disk (uint32_t)
+	// Get number of sectors on the disk
 	if(ty != 0) {
 		if(send_cmd(CMD9, 0) == 0 && rcvr_datablock(&mCSD, sizeof(mCSD))) {
-			switch(mCSD.structure()) {
-			//
-			case CSD::Structure::v1:
-				sectorCount = static_cast<CSD1&>(mCSD).size() >> sectorSizeBits;
-				break;
-
-			case CSD::Structure::v2:
-				sectorCount = static_cast<CSD2&>(mCSD).size() >> sectorSizeBits;
-				break;
-
-			case CSD::Structure::v3:
-				sectorCount = static_cast<CSD3&>(mCSD).size() >> sectorSizeBits;
-				break;
-
-			default:
+			mCSD.bswap();
+			uint64_t size = mCSD.getSize();
+#ifndef ENABLE_STORAGE_SIZE64
+			if(isSize64(size)) {
+				debug_e("[SD] Device size %llu requires ENABLE_STORAGE_SIZE64=1", size);
+				sectorCount = 0;
+			} else
+#endif
+			{
+				sectorCount = size >> sectorSizeBits;
+			}
+			if(sectorCount == 0) {
 				ty = 0;
 			}
 		} else {
