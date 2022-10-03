@@ -70,11 +70,62 @@ Descr: Low-level SDCard functions
 #define CT_SDC (CT_SD1 | CT_SD2) /* SD */
 #define CT_BLOCK 0x08			 /* Block addressing */
 
+String toString(Storage::SD::CSD::Structure structure)
+{
+	using Structure = Storage::SD::CSD::Structure;
+
+	switch(structure) {
+	case Structure::v1:
+		return "v1";
+	case Structure::v2:
+		return "v2";
+	case Structure::v3:
+		return "v3";
+	default:
+		return F("INVALID");
+	}
+}
+
 namespace Storage
 {
 namespace SD
 {
-size_t Card::CID::printTo(Print& p) const
+size_t CSD::printTo(Print& p) const
+{
+#define XX(tag, ...) p << F(#tag) << " : " << csd->tag() << endl;
+
+	auto csd = this;
+	SDCARD_CSD_MAP_A(XX)
+
+	switch(structure()) {
+	case Structure::v1: {
+		auto csd = static_cast<const CSD1*>(this);
+		p << F("size : ") << csd->size() << endl;
+		SDCARD_CSD_MAP_B1(XX)
+		break;
+	}
+	case Structure::v2: {
+		auto csd = static_cast<const CSD2*>(this);
+		p << F("size : ") << csd->size() << endl;
+		SDCARD_CSD_MAP_B2(XX)
+		break;
+	}
+	case Structure::v3: {
+		auto csd = static_cast<const CSD3*>(this);
+		p << F("size : ") << csd->size() << endl;
+		SDCARD_CSD_MAP_B3(XX)
+		break;
+	}
+	}
+
+	SDCARD_CSD_MAP_C(XX)
+
+#undef XX
+
+	return 0;
+}
+
+size_t CID::printTo(Print& p) const
 {
 	size_t n{0};
 
@@ -366,15 +417,23 @@ bool Card::begin(uint8_t chipSelect, uint32_t freq)
 
 	// Get number of sectors on the disk (uint32_t)
 	if(ty != 0) {
-		uint8_t csd[16];
-		if(send_cmd(CMD9, 0) == 0 && rcvr_datablock(csd, sizeof(csd))) {
-			if((csd[0] >> 6) == 1) { /* SDC ver 2.00 */
-				uint32_t cs = csd[9] + (uint16_t(csd[8]) << 8) + (uint32_t(csd[7] & 63) << 16) + 1;
-				sectorCount = cs << 10;
-			} else { /* SDC ver 1.XX or MMC */
-				uint8_t n = (csd[5] & 15) + ((csd[10] & 128) >> 7) + ((csd[9] & 3) << 1) + 2;
-				uint32_t cs = (csd[8] >> 6) + (uint16_t(csd[7]) << 2) + (uint16_t(csd[6] & 3) << 10) + 1;
-				sectorCount = cs << (n - 9);
+		if(send_cmd(CMD9, 0) == 0 && rcvr_datablock(&mCSD, sizeof(mCSD))) {
+			switch(mCSD.structure()) {
+			//
+			case CSD::Structure::v1:
+				sectorCount = static_cast<CSD1&>(mCSD).size() >> sectorSizeBits;
+				break;
+
+			case CSD::Structure::v2:
+				sectorCount = static_cast<CSD2&>(mCSD).size() >> sectorSizeBits;
+				break;
+
+			case CSD::Structure::v3:
+				sectorCount = static_cast<CSD3&>(mCSD).size() >> sectorSizeBits;
+				break;
+
+			default:
+				ty = 0;
 			}
 		} else {
 			ty = 0;
@@ -500,7 +559,7 @@ bool Card::sync()
 	return res;
 }
 
-bool Card::read_cid(CID& cid)
+bool Card::read_cid()
 {
 	if(!initialised) {
 		return false;
@@ -510,7 +569,7 @@ bool Card::read_cid(CID& cid)
 		return false;
 	}
 
-	bool res = send_cmd(CMD10, 0) == 0 && rcvr_datablock(&cid, sizeof(cid));
+	bool res = send_cmd(CMD10, 0) == 0 && rcvr_datablock(&mCID, sizeof(mCID));
 
 	deselect();
 
@@ -518,7 +577,7 @@ bool Card::read_cid(CID& cid)
 		return false;
 	}
 
-	cid.bswap();
+	mCID.bswap();
 	return true;
 }
 
