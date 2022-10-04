@@ -73,11 +73,6 @@ public:
 		return sectorCount;
 	}
 
-	uint16_t getSectorSize() const override
-	{
-		return sectorSize;
-	}
-
 	const CID& cid{mCID};
 	const CSD& csd{mCSD};
 
@@ -86,8 +81,8 @@ private:
 	 * Whilst SD V1.XX permits misaligned and partial block reads, later versions do not
 	 * and require transfers to be aligned to, and in multiples of, 512 bytes.
 	 */
-	static constexpr uint8_t sectorSizeShift{9};
-	static constexpr uint16_t sectorSize{1U << sectorSizeShift};
+	static constexpr uint8_t sectorSizeShift = defaultSectorSizeShift;
+	static constexpr uint16_t sectorSize = defaultSectorSize;
 
 	uint8_t init();
 	bool wait_ready();
