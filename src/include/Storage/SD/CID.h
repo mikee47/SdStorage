@@ -4,17 +4,6 @@
 
 namespace Storage::SD
 {
-/*
-		Samsung 32GB EVO Plus CID: 1b 53 4d 45 42 31 51 54 30 f1 77 5f ea 01 1a b9  .SMEB1QT0.w_....
-
-		1b                  MID
-		53 4d	            OID: "SM"
-		45 42 31 51 54 30   PNM: "EB1QT"
-		30                  PRV
-		f1 77 5f ea         PSN
-		1a 01               MDT    0000 0001 0001 1010
-		b9                  CRC7: 0x5C
-	*/
 struct __attribute__((packed)) CID {
 	uint8_t mid;		  ///< Manufacturer ID
 	char oid[2];		  ///< OEM / Application ID
@@ -23,7 +12,7 @@ struct __attribute__((packed)) CID {
 	uint32_t psn;		  ///< Product serial number
 	uint16_t mdt;		  ///< Manufacturing date
 	uint8_t not_used : 1; ///< Always 1
-	uint8_t crc7 : 7;	 ///< 7-bit checksum
+	uint8_t crc : 7;	  ///< 7-bit checksum
 
 	void bswap()
 	{
