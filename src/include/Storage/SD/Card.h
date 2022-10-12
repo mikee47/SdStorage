@@ -17,7 +17,7 @@ namespace Storage::SD
 class Card : public Device
 {
 public:
-	Card(SPIBase& spi) : Device(), spi(spi)
+	Card(const String& name, SPIBase& spi) : Device(), name(name), spi(spi)
 	{
 	}
 
@@ -32,7 +32,7 @@ public:
 
 	String getName() const override
 	{
-		return F("SDCard");
+		return name.c_str();
 	}
 
 	uint32_t getId() const
@@ -90,6 +90,7 @@ private:
 	bool xmit_datablock(const void* buff, uint8_t token);
 	uint8_t send_cmd(uint8_t cmd, uint32_t arg);
 
+	CString name;
 	SPIBase& spi;
 	CSD mCSD;
 	CID mCID;
