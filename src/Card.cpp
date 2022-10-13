@@ -39,34 +39,45 @@ Descr: Low-level SDCard functions
 #include <debug_progmem.h>
 
 /* MMC/SD command (SPI mode) */
-#define CMD0 (0)		   /* GO_IDLE_STATE */
-#define CMD1 (1)		   /* SEND_OP_COND */
-#define ACMD41 (0x80 + 41) /* SEND_OP_COND (SDC) */
-#define CMD8 (8)		   /* SEND_IF_COND */
-#define CMD9 (9)		   /* SEND_CSD */
-#define CMD10 (10)		   /* SEND_CID */
-#define CMD12 (12)		   /* STOP_TRANSMISSION */
-#define CMD13 (13)		   /* SEND_STATUS */
-#define ACMD13 (0x80 + 13) /* SD_STATUS (SDC) */
-#define CMD16 (16)		   /* SET_BLOCKLEN */
-#define CMD17 (17)		   /* READ_SINGLE_BLOCK */
-#define CMD18 (18)		   /* READ_MULTIPLE_BLOCK */
-#define CMD23 (23)		   /* SET_BLOCK_COUNT */
-#define ACMD23 (0x80 + 23) /* SET_WR_BLK_ERASE_COUNT (SDC) */
-#define CMD24 (24)		   /* WRITE_BLOCK */
-#define CMD25 (25)		   /* WRITE_MULTIPLE_BLOCK */
-#define CMD32 (32)		   /* ERASE_ER_BLK_START */
-#define CMD33 (33)		   /* ERASE_ER_BLK_END */
-#define CMD38 (38)		   /* ERASE */
-#define CMD55 (55)		   /* APP_CMD */
-#define CMD58 (58)		   /* READ_OCR */
+enum Command : uint8_t {
+	CMD0 = 0,			// GO_IDLE_STATE
+	CMD1 = 1,			// SEND_OP_COND
+	ACMD41 = 0x80 | 41, // SEND_OP_COND (SDC)
+	CMD8 = 8,			// SEND_IF_COND
+	CMD9 = 9,			// SEND_CSD
+	CMD10 = 10,			// SEND_CID
+	CMD12 = 12,			// STOP_TRANSMISSION
+	CMD13 = 13,			// SEND_STATUS
+	ACMD13 = 0x80 | 13, // SD_STATUS (SDC)
+	CMD16 = 16,			// SET_BLOCKLEN
+	CMD17 = 17,			// READ_SINGLE_BLOCK
+	CMD18 = 18,			// READ_MULTIPLE_BLOCK
+	CMD23 = 23,			// SET_BLOCK_COUNT
+	ACMD23 = 0x80 | 23, // SET_WR_BLK_ERASE_COUNT (SDC)
+	CMD24 = 24,			// WRITE_BLOCK
+	CMD25 = 25,			// WRITE_MULTIPLE_BLOCK
+	CMD32 = 32,			// ERASE_ER_BLK_START
+	CMD33 = 33,			// ERASE_ER_BLK_END
+	CMD38 = 38,			// ERASE
+	CMD55 = 55,			// APP_CMD
+	CMD58 = 58,			// READ_OCR
+};
 
 /* MMC card type flags (MMC_GET_TYPE) */
-#define CT_MMC 0x01				 /* MMC ver 3 */
-#define CT_SD1 0x02				 /* SD ver 1 */
-#define CT_SD2 0x04				 /* SD ver 2 */
-#define CT_SDC (CT_SD1 | CT_SD2) /* SD */
-#define CT_BLOCK 0x08			 /* Block addressing */
+enum CardType {
+	CT_MMC = 0x01,			  // MMC ver 3
+	CT_SD1 = 0x02,			  // SD ver 1
+	CT_SD2 = 0x04,			  // SD ver 2
+	CT_SDC = CT_SD1 | CT_SD2, // SD
+	CT_BLOCK = 0x08,		  // Block addressing
+};
+
+// Data block transfer control tokens
+enum Token {
+	TK_START_BLOCK_SINGLE = 0xfe,
+	TK_START_BLOCK_MULTI = 0xfc,
+	TK_STOP_TRAN = 0xfd,
+};
 
 #define CHECK_INIT()                                                                                                   \
 	if(!initialised) {                                                                                                 \
@@ -160,21 +171,23 @@ bool Card::xmit_datablock(const void* buff, uint8_t token)
 		return false;
 	}
 
-	spi.transfer(token); /* Xmit a token */
-	if(token != 0xFD) {  /* Is it data token? */
-		// Data gets modified so take a copy
-		uint8_t buffer[sectorSize];
-		memcpy(buffer, buff, sizeof(buffer));
-		spi.transfer(buffer, sizeof(buffer)); /* Xmit the 512 byte data block to MMC */
+	// Send the token
+	spi.transfer(token);
+	if(token == TK_STOP_TRAN) {
+		return true;
+	}
 
-		//		spi.setMOSI(HIGH); /* Send 0xFF */
-		spi.transfer16(0xffff);			/* Xmit dummy CRC */
-		uint8_t d = spi.transfer(0xff); /* keep MOSI HIGH and receive data response */
+	// Data gets modified so take a copy
+	uint8_t buffer[sectorSize];
+	memcpy(buffer, buff, sizeof(buffer));
+	spi.transfer(buffer, sizeof(buffer)); // Data
+	spi.transfer16(0xffff);				  // Dummy CRC
+	uint8_t d = spi.transfer(0xff);		  // Keep MOSI HIGH, read response
 
-		if((d & 0x1F) != 0x05) { /* If not accepted, return with error */
-			debug_e("[SDCard] data not accepted, d = 0x%02x", d);
-			return false;
-		}
+	// If not accepted, return with error
+	if((d & 0x1F) != 0x05) {
+		debug_e("[SDCard] data not accepted, d = 0x%02x", d);
+		return false;
 	}
 
 	return true;
@@ -208,26 +221,27 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg)
 	/* Send a command packet */
 	uint8_t crc;
 	if(cmd == CMD0) {
-		crc = 0x95; /* (valid CRC for CMD0(0)) */
+		crc = 0x95; // CRC for CMD0(0)
 	} else if(cmd == CMD8) {
-		crc = 0x87; /* (valid CRC for CMD8(0x1AA)) */
+		crc = 0x87; // CRC for CMD8(0x1AA)
 	} else {
-		crc = 0x01; /* Dummy CRC + Stop */
+		crc = 0x01; // Dummy CRC + Stop
 	}
 	uint8_t buf[]{
-		uint8_t(0x40 | cmd), /* Start + Command index */
-		uint8_t(arg >> 24),  /* Argument[31..24] */
-		uint8_t(arg >> 16),  /* Argument[23..16] */
-		uint8_t(arg >> 8),   /* Argument[15..8] */
-		uint8_t(arg),		 /* Argument[7..0] */
+		uint8_t(0x40 | cmd), // Start + Command index
+		uint8_t(arg >> 24),  // Argument[31..24]
+		uint8_t(arg >> 16),  // Argument[23..16]
+		uint8_t(arg >> 8),   // Argument[15..8]
+		uint8_t(arg),		 // Argument[7..0]
 		crc,
-		0xff, /* Dummy clock (force DO enabled) */
+		0xff, // Dummy clock (force DO enabled)
 	};
 	spi.transfer(buf, sizeof(buf));
 
 	/* Receive command response */
 	if(cmd == CMD12) {
-		spi.transfer(0xff); /* Skip a stuff byte when stop reading */
+		// Skip a stuff byte when stop reading
+		spi.transfer(0xff);
 	}
 
 	/* Wait for a valid response */
@@ -238,7 +252,7 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg)
 	} while((d & 0x80) && --n);
 
 	//	debug_i("[SD] send_cmd %u -> %u (%u try)", cmd, d, n);
-	return d; /* Return with the response value */
+	return d;
 }
 
 bool Card::begin(uint8_t chipSelect, uint32_t freq)
@@ -321,7 +335,7 @@ uint8_t Card::init()
 		debug_i("[SD] Sdv2 ?");
 		uint8_t buf[4]{0xff, 0xff, 0xff, 0xff};
 		spi.transfer(buf, sizeof(buf));
-		debug_hex(INFO, "[SD]", buf, sizeof(buf));
+		debug_hex(INFO, "[SD] IF COND", buf, sizeof(buf));
 
 		// Check card can work at vdd range of 2.7-3.6V
 		if(buf[2] != 0x01 || buf[3] != 0xAA) {
@@ -352,7 +366,7 @@ uint8_t Card::init()
 		memset(buf, 0xFF, sizeof(buf));
 		spi.transfer(buf, sizeof(buf));
 		ty = (buf[0] & 0x40) ? CT_SD2 | CT_BLOCK : CT_SD2; /* SDv2 */
-		debug_hex(INFO, "[SD]", buf, sizeof(buf));
+		debug_hex(INFO, "[SD] OCR", buf, sizeof(buf));
 
 	} else { /* SDv1 or MMCv3 */
 		debug_i("[SD] Sdv1 / MMCv3 ?");
@@ -455,20 +469,24 @@ bool Card::write(storage_size_t address, const void* src, size_t size)
 	}
 
 	auto blockCount = size >> sectorSizeShift;
-	if(blockCount == 1) { /* Single block write */
-		if((send_cmd(CMD24, address) == 0) && xmit_datablock(src, 0xFE)) {
+	if(blockCount == 1) {
+		// Single block write
+		if((send_cmd(CMD24, address) == 0) && xmit_datablock(src, TK_START_BLOCK_SINGLE)) {
 			blockCount = 0;
 		} else {
 			debug_e("[SD] CMD24 error");
 		}
-	} else { /* Multiple block write */
+	} else {
+		// Multiple block write
 		if(cardType & CT_SDC) {
+			// SET_WR_BLK_ERASE_COUNT
 			send_cmd(ACMD23, blockCount);
 		}
-		if(send_cmd(CMD25, address) == 0) { /* WRITE_MULTIPLE_BLOCK */
+		//  WRITE_MULTIPLE_BLOCK
+		if(send_cmd(CMD25, address) == 0) {
 			auto bufptr = static_cast<const uint8_t*>(src);
 			do {
-				if(!xmit_datablock(bufptr, 0xFC)) {
+				if(!xmit_datablock(bufptr, TK_START_BLOCK_MULTI)) {
 					debug_e("[SD] xmit error");
 					break;
 				}
@@ -476,7 +494,7 @@ bool Card::write(storage_size_t address, const void* src, size_t size)
 				--blockCount;
 			} while(blockCount != 0);
 
-			if(!xmit_datablock(0, 0xFD)) { /* STOP_TRAN token */
+			if(!xmit_datablock(0, TK_STOP_TRAN)) {
 				debug_e("[SD] STOP_TRAN error");
 				blockCount = 1;
 			}
