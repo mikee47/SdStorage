@@ -284,6 +284,16 @@ bool Card::begin(uint8_t chipSelect, uint32_t freq)
 	return initialised;
 }
 
+void Card::end()
+{
+	if(!initialised) {
+		return;
+	}
+
+	spi.end();
+	initialised = false;
+}
+
 uint8_t Card::init()
 {
 	// init send 0xFF x 80

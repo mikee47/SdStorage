@@ -21,12 +21,19 @@ public:
 	{
 	}
 
+	~Card()
+	{
+		end();
+	}
+
 	/**
 	 * @brief Initialise the card
 	 * @param chipSelect
 	 * @param freq SPI frequency in Hz, use 0 for maximum supported frequency
 	 */
 	bool begin(uint8_t chipSelect, uint32_t freq = 0);
+
+	void end();
 
 	/* Storage Device methods */
 
