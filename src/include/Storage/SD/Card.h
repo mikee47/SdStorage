@@ -17,6 +17,13 @@ namespace Storage::SD
 class Card : public Device
 {
 public:
+	/*
+	 * Whilst SD V1.XX permits misaligned and partial block reads, later versions do not
+	 * and require transfers to be aligned to, and in multiples of, 512 bytes.
+	 */
+	static constexpr uint8_t sectorSizeShift = defaultSectorSizeShift;
+	static constexpr uint16_t sectorSize = defaultSectorSize;
+
 	Card(const String& name, SPIBase& spi) : Device(), name(name), spi(spi)
 	{
 	}
@@ -56,10 +63,7 @@ public:
 
 	bool write(storage_size_t address, const void* src, size_t size) override;
 
-	bool erase_range(storage_size_t address, size_t size) override
-	{
-		return false;
-	}
+	bool erase_range(storage_size_t address, storage_size_t size) override;
 
 	bool sync() override;
 
@@ -82,13 +86,6 @@ public:
 	const CSD& csd{mCSD};
 
 private:
-	/*
-	 * Whilst SD V1.XX permits misaligned and partial block reads, later versions do not
-	 * and require transfers to be aligned to, and in multiples of, 512 bytes.
-	 */
-	static constexpr uint8_t sectorSizeShift = defaultSectorSizeShift;
-	static constexpr uint16_t sectorSize = defaultSectorSize;
-
 	uint8_t init();
 	bool wait_ready();
 	void deselect();

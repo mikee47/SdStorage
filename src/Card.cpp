@@ -251,7 +251,7 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg)
 		d = spi.transfer(0xff);
 	} while((d & 0x80) && --n);
 
-	//	debug_i("[SD] send_cmd %u -> %u (%u try)", cmd, d, n);
+	debug_d("[SD] send_cmd(%u): 0x%02x (%u try)", cmd, d, n);
 	return d;
 }
 
@@ -503,6 +503,25 @@ bool Card::write(storage_size_t address, const void* src, size_t size)
 	deselect();
 
 	return blockCount == 0;
+}
+
+bool Card::erase_range(storage_size_t address, storage_size_t size)
+{
+	CHECK_INIT()
+	CHECK_ALIGN()
+
+	if(cardType & CT_BLOCK) {
+		address >>= sectorSizeShift;
+		size >>= sectorSizeShift;
+	}
+
+	// ERASE_WR_BLK_START, ERASE_WR_BLK_END, ERASE / DISCARD
+	bool res =
+		send_cmd(CMD32, address) == 0 && send_cmd(CMD33, address + size - 1) == 0 && send_cmd(CMD38, 0x00000001) == 0;
+
+	deselect();
+
+	return res;
 }
 
 bool Card::sync()
