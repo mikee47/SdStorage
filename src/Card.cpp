@@ -68,9 +68,18 @@ Descr: Low-level SDCard functions
 #define CT_SDC (CT_SD1 | CT_SD2) /* SD */
 #define CT_BLOCK 0x08			 /* Block addressing */
 
-namespace Storage
-{
-namespace SD
+#define CHECK_INIT()                                                                                                   \
+	if(!initialised) {                                                                                                 \
+		return false;                                                                                                  \
+	}
+
+#define CHECK_ALIGN()                                                                                                  \
+	if(address % sectorSize != 0 || size % sectorSize != 0 || size == 0) {                                             \
+		debug_e("[SD] %s must be whole sectors", __FUNCTION__);                                                        \
+		return false;                                                                                                  \
+	}
+
+namespace Storage::SD
 {
 /*
  * Wait for card ready
@@ -396,14 +405,8 @@ uint8_t Card::init()
 
 bool Card::read(storage_size_t address, void* dst, size_t size)
 {
-	if(!initialised) {
-		return false;
-	}
-
-	if(address % sectorSize != 0 || size % sectorSize != 0 || size == 0) {
-		debug_e("[SD] Read must be whole sectors");
-		return false;
-	}
+	CHECK_INIT()
+	CHECK_ALIGN()
 
 	// Convert byte address to sector number for block devices
 	if(cardType & CT_BLOCK) {
@@ -433,17 +436,8 @@ bool Card::read(storage_size_t address, void* dst, size_t size)
 
 bool Card::write(storage_size_t address, const void* src, size_t size)
 {
-	debug_i("[SD] write (%llu, %u)", address, size);
-	// m_printHex("READ", src, size);
-
-	if(!initialised) {
-		return false;
-	}
-
-	if(address % sectorSize != 0 || size % sectorSize != 0 || size == 0) {
-		debug_e("[SD] Write must be whole sectors");
-		return false;
-	}
+	CHECK_INIT()
+	CHECK_ALIGN()
 
 	// Convert byte address to sector number for block devices
 	if(cardType & CT_BLOCK) {
@@ -495,5 +489,4 @@ bool Card::sync()
 	return res;
 }
 
-} // namespace SD
-} // namespace Storage
+} // namespace Storage::SD

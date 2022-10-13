@@ -12,9 +12,7 @@ Descr: Low-level SDCard functions
 #include "CSD.h"
 #include "CID.h"
 
-namespace Storage
-{
-namespace SD
+namespace Storage::SD
 {
 class Card : public Device
 {
@@ -101,5 +99,4 @@ private:
 	uint8_t cardType; ///< b0:MMC, b1:SDv1, b2:SDv2, b3:Block addressing
 };					  // namespace SD
 
-} // namespace SD
-} // namespace Storage
+} // namespace Storage::SD

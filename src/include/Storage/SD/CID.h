@@ -2,9 +2,7 @@
 
 #include <Print.h>
 
-namespace Storage
-{
-namespace SD
+namespace Storage::SD
 {
 /*
 		Samsung 32GB EVO Plus CID: 1b 53 4d 45 42 31 51 54 30 f1 77 5f ea 01 1a b9  .SMEB1QT0.w_....
@@ -57,5 +55,4 @@ struct __attribute__((packed)) CID {
 };
 static_assert(sizeof(CID) == 16, "Bad CID struct");
 
-} // namespace SD
-} // namespace Storage
+} // namespace Storage::SD
