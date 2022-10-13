@@ -1,2 +1,3 @@
 COMPONENT_DEPENDS := DiskStorage SPI
 COMPONENT_INCDIRS := src/include
+COMPONENT_DOXYGEN_INPUT := src/include
