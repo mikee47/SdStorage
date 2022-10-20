@@ -7,24 +7,22 @@ Descr: Low-level SDCard functions
 */
 #pragma once
 
-#include <Storage/Device.h>
+#include <Storage/Disk/BlockDevice.h>
 #include <SPIBase.h>
 #include "CSD.h"
 #include "CID.h"
 
 namespace Storage::SD
 {
-class Card : public Device
+class Card : public Disk::BlockDevice
 {
 public:
 	/*
 	 * Whilst SD V1.XX permits misaligned and partial block reads, later versions do not
 	 * and require transfers to be aligned to, and in multiples of, 512 bytes.
 	 */
-	static constexpr uint8_t sectorSizeShift = defaultSectorSizeShift;
-	static constexpr uint16_t sectorSize = defaultSectorSize;
 
-	Card(const String& name, SPIBase& spi) : Device(), name(name), spi(spi)
+	Card(const String& name, SPIBase& spi) : BlockDevice(), name(name), spi(spi)
 	{
 	}
 
@@ -59,31 +57,19 @@ public:
 		return Type::sdcard;
 	}
 
-	bool read(storage_size_t address, void* dst, size_t size) override;
-
-	bool write(storage_size_t address, const void* src, size_t size) override;
-
-	bool erase_range(storage_size_t address, storage_size_t size) override;
-
-	bool sync() override;
-
 	size_t getBlockSize() const override
 	{
 		return size_t(mCSD.sector_size() + 1) << sectorSizeShift;
 	}
 
-	storage_size_t getSize() const override
-	{
-		return sectorCount << sectorSizeShift;
-	}
-
-	storage_size_t getSectorCount() const override
-	{
-		return sectorCount;
-	}
-
 	const CID& cid{mCID};
 	const CSD& csd{mCSD};
+
+protected:
+	bool raw_sector_read(storage_size_t address, void* dst, size_t size) override;
+	bool raw_sector_write(storage_size_t address, const void* src, size_t size) override;
+	bool raw_sector_erase_range(storage_size_t address, size_t size) override;
+	bool raw_sync() override;
 
 private:
 	uint8_t init();
@@ -98,7 +84,6 @@ private:
 	SPIBase& spi;
 	CSD mCSD;
 	CID mCID;
-	uint64_t sectorCount{0};
 	uint8_t chipSelect{255};
 	bool initialised{false};
 	uint8_t cardType; ///< b0:MMC, b1:SDv1, b2:SDv2, b3:Block addressing

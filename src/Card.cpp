@@ -84,12 +84,6 @@ enum Token {
 		return false;                                                                                                  \
 	}
 
-#define CHECK_ALIGN()                                                                                                  \
-	if(address % sectorSize != 0 || size % sectorSize != 0 || size == 0) {                                             \
-		debug_e("[SD] %s must be whole sectors", __FUNCTION__);                                                        \
-		return false;                                                                                                  \
-	}
-
 namespace Storage::SD
 {
 /*
@@ -427,52 +421,45 @@ uint8_t Card::init()
 	return ty;
 }
 
-bool Card::read(storage_size_t address, void* dst, size_t size)
+bool Card::raw_sector_read(storage_size_t address, void* dst, size_t size)
 {
 	CHECK_INIT()
-	CHECK_ALIGN()
 
 	// Convert byte address to sector number for block devices
-	if(cardType & CT_BLOCK) {
-		address >>= sectorSizeShift;
+	if((cardType & CT_BLOCK) == 0) {
+		address <<= sectorSizeShift;
 	}
 
-	auto blockCount = size >> sectorSizeShift;
-	uint8_t cmd = (blockCount > 1) ? CMD18 : CMD17; /*  READ_MULTIPLE_BLOCK : READ_SINGLE_BLOCK */
+	uint8_t cmd = (size > 1) ? CMD18 : CMD17; /*  READ_MULTIPLE_BLOCK : READ_SINGLE_BLOCK */
 	if(send_cmd(cmd, address) == 0) {
-		auto bufptr = static_cast<uint8_t*>(dst);
-		do {
+		for(auto bufptr = static_cast<uint8_t*>(dst); size != 0; --size, bufptr += sectorSize) {
 			if(!rcvr_datablock(bufptr, sectorSize)) {
 				debug_e("[SD] rcvr error");
 				break;
 			}
-			bufptr += sectorSize;
-			--blockCount;
-		} while(blockCount != 0);
+		}
 		if(cmd == CMD18) {
 			send_cmd(CMD12, 0); /* STOP_TRANSMISSION */
 		}
 	}
 	deselect();
 
-	return blockCount == 0;
+	return size == 0;
 }
 
-bool Card::write(storage_size_t address, const void* src, size_t size)
+bool Card::raw_sector_write(storage_size_t address, const void* src, size_t size)
 {
 	CHECK_INIT()
-	CHECK_ALIGN()
 
-	// Convert byte address to sector number for block devices
-	if(cardType & CT_BLOCK) {
-		address >>= sectorSizeShift;
+	// If required, convert sector address to byte offset
+	if((cardType & CT_BLOCK) == 0) {
+		address <<= sectorSizeShift;
 	}
 
-	auto blockCount = size >> sectorSizeShift;
-	if(blockCount == 1) {
+	if(size == 1) {
 		// Single block write
 		if((send_cmd(CMD24, address) == 0) && xmit_datablock(src, TK_START_BLOCK_SINGLE)) {
-			blockCount = 0;
+			size = 0;
 		} else {
 			debug_e("[SD] CMD24 error");
 		}
@@ -480,39 +467,35 @@ bool Card::write(storage_size_t address, const void* src, size_t size)
 		// Multiple block write
 		if(cardType & CT_SDC) {
 			// SET_WR_BLK_ERASE_COUNT
-			send_cmd(ACMD23, blockCount);
+			send_cmd(ACMD23, size);
 		}
 		//  WRITE_MULTIPLE_BLOCK
 		if(send_cmd(CMD25, address) == 0) {
-			auto bufptr = static_cast<const uint8_t*>(src);
-			do {
+			for(auto bufptr = static_cast<const uint8_t*>(src); size != 0; --size, bufptr += sectorSize) {
 				if(!xmit_datablock(bufptr, TK_START_BLOCK_MULTI)) {
 					debug_e("[SD] xmit error");
 					break;
 				}
-				bufptr += sectorSize;
-				--blockCount;
-			} while(blockCount != 0);
+			}
 
 			if(!xmit_datablock(0, TK_STOP_TRAN)) {
 				debug_e("[SD] STOP_TRAN error");
-				blockCount = 1;
+				size = 1;
 			}
 		}
 	}
 	deselect();
 
-	return blockCount == 0;
+	return size == 0;
 }
 
-bool Card::erase_range(storage_size_t address, storage_size_t size)
+bool Card::raw_sector_erase_range(storage_size_t address, size_t size)
 {
 	CHECK_INIT()
-	CHECK_ALIGN()
 
-	if(cardType & CT_BLOCK) {
-		address >>= sectorSizeShift;
-		size >>= sectorSizeShift;
+	if((cardType & CT_BLOCK) == 0) {
+		address <<= sectorSizeShift;
+		size <<= sectorSizeShift;
 	}
 
 	// ERASE_WR_BLK_START, ERASE_WR_BLK_END, ERASE / DISCARD
@@ -524,7 +507,7 @@ bool Card::erase_range(storage_size_t address, storage_size_t size)
 	return res;
 }
 
-bool Card::sync()
+bool Card::raw_sync()
 {
 	if(!initialised) {
 		return false;
