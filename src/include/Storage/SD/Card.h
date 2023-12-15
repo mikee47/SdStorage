@@ -8,12 +8,23 @@ Descr: Low-level SDCard functions
 #pragma once
 
 #include <Storage/Disk/BlockDevice.h>
-#include <SPIBase.h>
+#include <HSPI/Device.h>
 #include "CSD.h"
 #include "CID.h"
 
 namespace Storage::SD
 {
+class SpiDevice : public HSPI::Device
+{
+public:
+	using HSPI::Device::Device;
+
+	HSPI::IoModes getSupportedIoModes() const override
+	{
+		return HSPI::IoMode::SPI;
+	}
+};
+
 class Card : public Disk::BlockDevice
 {
 public:
@@ -22,7 +33,7 @@ public:
 	 * and require transfers to be aligned to, and in multiples of, 512 bytes.
 	 */
 
-	Card(const String& name, SPIBase& spi) : BlockDevice(), name(name), spi(spi)
+	Card(const String& name, HSPI::Controller& controller) : BlockDevice(), name(name), spi(controller)
 	{
 	}
 
@@ -36,7 +47,7 @@ public:
 	 * @param chipSelect
 	 * @param freq SPI frequency in Hz, use 0 for maximum supported frequency
 	 */
-	bool begin(uint8_t chipSelect, uint32_t freq = 0);
+	bool begin(HSPI::PinSet pinSet, uint8_t chipSelect, uint32_t freq = 0);
 
 	void end();
 
@@ -81,10 +92,9 @@ private:
 	uint8_t send_cmd(uint8_t cmd, uint32_t arg);
 
 	CString name;
-	SPIBase& spi;
+	SpiDevice spi;
 	CSD mCSD;
 	CID mCID;
-	uint8_t chipSelect{255};
 	bool initialised{false};
 	uint8_t cardType; ///< b0:MMC, b1:SDv1, b2:SDv2, b3:Block addressing
 };					  // namespace SD

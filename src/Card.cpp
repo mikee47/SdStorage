@@ -92,8 +92,11 @@ namespace Storage::SD
 bool Card::wait_ready() /* 1:OK, 0:Timeout */
 {
 	for(unsigned tmr = 5000; tmr; tmr--) { /* Wait for ready in timeout of 500ms */
-		uint8_t d = spi.transfer(0xff);
-		if(d == 0xFF) {
+		HSPI::Request req;
+		req.out.set8(0xff);
+		req.in.set8(0);
+		spi.execute(req);
+		if(req.in.data8 == 0xff) {
 			return true;
 		}
 		delayMicroseconds(100);
@@ -107,8 +110,8 @@ bool Card::wait_ready() /* 1:OK, 0:Timeout */
  */
 void Card::deselect()
 {
-	digitalWrite(chipSelect, HIGH);
-	spi.transfer(0xff); /* Send 0xFF Dummy clock (force DO hi-z for multiple slave SPI) */
+	// digitalWrite(chipSelect, HIGH);
+	// spi.transfer(0xff); /* Send 0xFF Dummy clock (force DO hi-z for multiple slave SPI) */
 }
 
 /**
@@ -118,8 +121,11 @@ void Card::deselect()
  */
 bool Card::select()
 {
-	digitalWrite(chipSelect, LOW);
-	spi.transfer(0xff); /* Dummy clock (force DO enabled) */
+	// digitalWrite(chipSelect, LOW);
+	/* Dummy clock (force DO enabled) */
+	HSPI::Request req;
+	req.out.set8(0xff);
+	spi.execute(req);
 	if(wait_ready()) {
 		return true;
 	}
@@ -135,21 +141,29 @@ bool Card::select()
 bool Card::rcvr_datablock(void* buff, size_t btr)
 {
 	/* Wait for data packet in timeout of 100ms */
-	uint8_t d{0xFF};
+	HSPI::Request req;
+	req.out.set8(0xff);
+	req.in.set8(0xff);
 	for(unsigned tmr = 1000; tmr; tmr--) {
-		d = spi.transfer(0xff);
-		if(d != 0xFF) {
+		spi.execute(req);
+		if(req.in.data8 != 0xFF) {
 			break;
 		}
 		delayMicroseconds(100);
 	}
-	if(d != 0xFE) {
+	if(req.in.data8 != 0xFE) {
 		return false; /* If not valid data token, return with error */
 	}
 
 	memset(buff, 0xFF, btr);
-	spi.transfer(static_cast<uint8_t*>(buff), btr);
-	spi.transfer16(0xffff); // keep MOSI HIGH, discard CRC
+	req.out.set(buff, btr);
+	req.in.set(buff, btr);
+	spi.execute(req);
+
+	// keep MOSI HIGH, discard CRC
+	req.out.set16(0xffff);
+	req.in.clear();
+	spi.execute(req);
 
 	// success
 	return true;
@@ -166,21 +180,28 @@ bool Card::xmit_datablock(const void* buff, uint8_t token)
 	}
 
 	// Send the token
-	spi.transfer(token);
+	HSPI::Request req;
+	req.out.set8(token);
+	spi.execute(req);
 	if(token == TK_STOP_TRAN) {
 		return true;
 	}
 
-	// Data gets modified so take a copy
-	uint8_t buffer[sectorSize];
-	memcpy(buffer, buff, sizeof(buffer));
-	spi.transfer(buffer, sizeof(buffer)); // Data
-	spi.transfer16(0xffff);				  // Dummy CRC
-	uint8_t d = spi.transfer(0xff);		  // Keep MOSI HIGH, read response
+	// Data
+	req.out.set(buff, sectorSize);
+	spi.execute(req);
+	// Dummy CRC
+	req.out.set16(0xffff);
+	spi.execute(req);
+
+	// Keep MOSI HIGH, read response
+	req.out.set8(0xff);
+	req.in.set8(0);
+	spi.execute(req);
 
 	// If not accepted, return with error
-	if((d & 0x1F) != 0x05) {
-		debug_e("[SDCard] data not accepted, d = 0x%02x", d);
+	if((req.in.data8 & 0x1F) != 0x05) {
+		debug_e("[SDCard] data not accepted, d = 0x%02x", req.in.data8);
 		return false;
 	}
 
@@ -230,38 +251,34 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg)
 		crc,
 		0xff, // Dummy clock (force DO enabled)
 	};
-	spi.transfer(buf, sizeof(buf));
+	HSPI::Request req;
+	req.out.set(buf, sizeof(buf));
+	spi.execute(req);
 
 	/* Receive command response */
 	if(cmd == CMD12) {
 		// Skip a stuff byte when stop reading
-		spi.transfer(0xff);
+		req.out.set8(0xff);
+		spi.execute(req);
 	}
 
 	/* Wait for a valid response */
 	uint8_t d;
 	unsigned n = 10;
+	req.out.set8(0xff);
+	req.in.set8(0);
 	do {
-		d = spi.transfer(0xff);
+		spi.execute(req);
+		d = req.in.data8;
 	} while((d & 0x80) && --n);
 
 	debug_d("[SD] send_cmd(%u): 0x%02x (%u try)", cmd, d, n);
 	return d;
 }
 
-bool Card::begin(uint8_t chipSelect, uint32_t freq)
+bool Card::begin(HSPI::PinSet pinSet, uint8_t chipSelect, uint32_t freq)
 {
 	if(initialised) {
-		return false;
-	}
-
-	this->chipSelect = chipSelect;
-	digitalWrite(chipSelect, HIGH);
-	pinMode(chipSelect, OUTPUT);
-	digitalWrite(chipSelect, HIGH);
-
-	if(!spi.begin()) {
-		debug_e("[SD] SPI init failed");
 		return false;
 	}
 
@@ -269,8 +286,14 @@ bool Card::begin(uint8_t chipSelect, uint32_t freq)
 	if(freq == 0 || freq > maxFreq) {
 		freq = maxFreq;
 	}
-	SPISettings settings(freq, MSBFIRST, SPI_MODE0);
-	spi.beginTransaction(settings);
+	if(!spi.begin(pinSet, chipSelect, freq)) {
+		debug_e("[SD] SPI init failed");
+		return false;
+	}
+
+	spi.setBitOrder(MSBFIRST);
+	spi.setClockMode(HSPI::ClockMode::mode0);
+	spi.setIoMode(HSPI::IoMode::SPI);
 
 	delayMicroseconds(10000);
 
@@ -307,7 +330,9 @@ uint8_t Card::init()
 	// init send 0xFF x 80
 	uint8_t tmp[80 / 8];
 	memset(tmp, 0xff, sizeof(tmp));
-	spi.transfer(tmp, sizeof(tmp));
+	HSPI::Request req;
+	req.out.set(tmp, sizeof(tmp));
+	spi.execute(req);
 
 	// send n send_cmd(CMD0, 0)");
 	uint8_t retCmd;
@@ -327,12 +352,13 @@ uint8_t Card::init()
 	// Enter Idle state
 	if(send_cmd(CMD8, 0x1AA) == 1) { /* SDv2? */
 		debug_i("[SD] Sdv2 ?");
-		uint8_t buf[4]{0xff, 0xff, 0xff, 0xff};
-		spi.transfer(buf, sizeof(buf));
-		debug_hex(INFO, "[SD] IF COND", buf, sizeof(buf));
+		req.out.set32(0xffffffff);
+		req.in.set32(0);
+		spi.execute(req);
+		debug_hex(INFO, "[SD] IF COND", req.in.data, 4);
 
 		// Check card can work at vdd range of 2.7-3.6V
-		if(buf[2] != 0x01 || buf[3] != 0xAA) {
+		if(req.in.data[2] != 0x01 || req.in.data[3] != 0xAA) {
 			debug_e("[SD] VDD invalid");
 			return 0;
 		}
@@ -357,10 +383,10 @@ uint8_t Card::init()
 			return 0;
 		}
 
-		memset(buf, 0xFF, sizeof(buf));
-		spi.transfer(buf, sizeof(buf));
-		ty = (buf[0] & 0x40) ? CT_SD2 | CT_BLOCK : CT_SD2; /* SDv2 */
-		debug_hex(INFO, "[SD] OCR", buf, sizeof(buf));
+		req.in.set32(0);
+		spi.execute(req);
+		ty = (req.in.data[0] & 0x40) ? CT_SD2 | CT_BLOCK : CT_SD2; /* SDv2 */
+		debug_hex(INFO, "[SD] OCR", req.in.data, 4);
 
 	} else { /* SDv1 or MMCv3 */
 		debug_i("[SD] Sdv1 / MMCv3 ?");
