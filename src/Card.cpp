@@ -250,29 +250,22 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg)
 		uint8_t(arg),		 // Argument[7..0]
 		crc,
 		0xff, // Dummy clock (force DO enabled)
+		// Response
+		0xff,
+		0xff,
 	};
+	unsigned len = (cmd == CMD12) ? sizeof(buf) : (sizeof(buf) - 1);
 	HSPI::Request req;
-	req.out.set(buf, sizeof(buf));
+	req.out.set(buf, len);
+	req.in.set(buf, len);
+
 	spi.execute(req);
 
-	/* Receive command response */
-	if(cmd == CMD12) {
-		// Skip a stuff byte when stop reading
-		req.out.set8(0xff);
-		spi.execute(req);
-	}
+	debug_hex(DBG, "SPI", buf, len);
 
-	/* Wait for a valid response */
-	uint8_t d;
-	unsigned n = 10;
-	req.out.set8(0xff);
-	req.in.set8(0);
-	do {
-		spi.execute(req);
-		d = req.in.data8;
-	} while((d & 0x80) && --n);
+	auto d = buf[len-1];
 
-	debug_d("[SD] send_cmd(%u): 0x%02x (%u try)", cmd, d, n);
+	debug_d("[SD] send_cmd(%u): 0x%02x", cmd, d);
 	return d;
 }
 
@@ -317,10 +310,6 @@ bool Card::begin(HSPI::PinSet pinSet, uint8_t chipSelect, uint32_t freq)
 
 void Card::end()
 {
-	if(!initialised) {
-		return;
-	}
-
 	spi.end();
 	initialised = false;
 }
@@ -333,6 +322,8 @@ uint8_t Card::init()
 	HSPI::Request req;
 	req.out.set(tmp, sizeof(tmp));
 	spi.execute(req);
+
+	//!! OK to here
 
 	// send n send_cmd(CMD0, 0)");
 	uint8_t retCmd;
