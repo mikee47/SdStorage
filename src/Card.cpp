@@ -242,6 +242,7 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg)
 	} else {
 		crc = 0x01; // Dummy CRC + Stop
 	}
+
 	uint8_t buf[]{
 		uint8_t(0x40 | cmd), // Start + Command index
 		uint8_t(arg >> 24),  // Argument[31..24]
@@ -259,11 +260,11 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg)
 	req.out.set(buf, len);
 	req.in.set(buf, len);
 
+	debug_hex(DBG, "SPI > ", buf, len);
 	spi.execute(req);
+	debug_hex(DBG, "SPI < ", buf, len);
 
-	debug_hex(DBG, "SPI", buf, len);
-
-	auto d = buf[len-1];
+	auto d = buf[len - 1];
 
 	debug_d("[SD] send_cmd(%u): 0x%02x", cmd, d);
 	return d;
@@ -341,15 +342,33 @@ uint8_t Card::init()
 	uint8_t ty = 0;
 
 	// Enter Idle state
-	if(send_cmd(CMD8, 0x1AA) == 1) { /* SDv2? */
+	// if(send_cmd(CMD8, 0x1AA) == 1) { /* SDv2? */
+	uint8_t buf[]{
+		uint8_t(0x40 | CMD8), // Start + Command index
+		0,
+		0,
+		0x01,
+		0xAA,
+		0x87, // crc
+		0xff, // Dummy clock (force DO enabled)
+		0xff, // Response
+		// Result
+		0xff,
+		0xff,
+		0xff,
+		0xff,
+	};
+	req.out.set(buf, sizeof(buf));
+	req.in.set(buf, sizeof(buf));
+	spi.execute(req);
+
+	if(buf[7] == 0x01) {
 		debug_i("[SD] Sdv2 ?");
-		req.out.set32(0xffffffff);
-		req.in.set32(0);
-		spi.execute(req);
-		debug_hex(INFO, "[SD] IF COND", req.in.data, 4);
+		const uint8_t* res = &buf[8];
+		debug_hex(INFO, "[SD] IF COND", res, 4);
 
 		// Check card can work at vdd range of 2.7-3.6V
-		if(req.in.data[2] != 0x01 || req.in.data[3] != 0xAA) {
+		if(res[2] != 0x01 || res[3] != 0xAA) {
 			debug_e("[SD] VDD invalid");
 			return 0;
 		}
@@ -374,11 +393,11 @@ uint8_t Card::init()
 			return 0;
 		}
 
+		req.out.set32(0xffffffff);
 		req.in.set32(0);
 		spi.execute(req);
 		ty = (req.in.data[0] & 0x40) ? CT_SD2 | CT_BLOCK : CT_SD2; /* SDv2 */
 		debug_hex(INFO, "[SD] OCR", req.in.data, 4);
-
 	} else { /* SDv1 or MMCv3 */
 		debug_i("[SD] Sdv1 / MMCv3 ?");
 		uint8_t cmd;
@@ -408,8 +427,6 @@ uint8_t Card::init()
 	}
 
 	// Get number of sectors on the disk
-	assert(ty != 0);
-
 	if(send_cmd(CMD9, 0) != 0 || !rcvr_datablock(&mCSD, sizeof(mCSD))) {
 		debug_e("[SD] Read CSD failed");
 		return 0;
@@ -436,7 +453,7 @@ uint8_t Card::init()
 	mCID.bswap();
 
 	return ty;
-}
+} // namespace Storage::SD
 
 bool Card::raw_sector_read(storage_size_t address, void* dst, size_t size)
 {
