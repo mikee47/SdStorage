@@ -259,10 +259,10 @@ bool Card::begin(HSPI::PinSet pinSet, uint8_t chipSelect, uint32_t freq)
 	if(freq == 0 || freq > maxFreq) {
 		freq = maxFreq;
 	}
-	// spi.setClockSpeed(freq);
+	spi.setClockSpeed(freq);
 
 	initialised = true;
-	debug_i("[SD] OK: TYPE %u", cardType);
+	debug_d("[SD] OK: TYPE %u", cardType);
 
 	Disk::scanPartitions(*this);
 
@@ -299,34 +299,16 @@ uint8_t Card::init()
 
 	uint8_t ty = 0;
 
-	// Enter Idle state
-	// if(send_cmd(CMD8, 0x1AA) == 1) { /* SDv2? */
-	uint8_t buf[]{
-		uint8_t(0x40 | CMD8), // Start + Command index
-		0,
-		0,
-		0x01,
-		0xAA,
-		0x87, // crc
-		0xff, // Dummy clock (force DO enabled)
-		0xff, // Response
-		// Result
-		0xff,
-		0xff,
-		0xff,
-		0xff,
-	};
-	req.out.set(buf, sizeof(buf));
-	req.in.set(buf, sizeof(buf));
-	spi.execute(req);
+	if(send_cmd(CMD8, 0x1AA) == 0x01) { /* SDv2? */
+		req.out.set32(0xffffffff);
+		req.in.set32(0);
+		spi.execute(req);
 
-	if(buf[7] == 0x01) {
-		debug_i("[SD] Sdv2 ?");
-		const uint8_t* res = &buf[8];
-		debug_hex(INFO, "[SD] IF COND", res, 4);
+		debug_d("[SD] Sdv2 ?");
+		debug_hex(DBG, "[SD] IF COND", req.in.data, 4);
 
 		// Check card can work at vdd range of 2.7-3.6V
-		if(res[2] != 0x01 || res[3] != 0xAA) {
+		if(req.in.data[2] != 0x01 || req.in.data[3] != 0xAA) {
 			debug_e("[SD] VDD invalid");
 			return 0;
 		}
@@ -355,7 +337,7 @@ uint8_t Card::init()
 		req.in.set32(0);
 		spi.execute(req);
 		ty = (req.in.data[0] & 0x40) ? CT_SD2 | CT_BLOCK : CT_SD2; /* SDv2 */
-		debug_hex(INFO, "[SD] OCR", req.in.data, 4);
+		debug_hex(DBG, "[SD] OCR", req.in.data, 4);
 	} else { /* SDv1 or MMCv3 */
 		debug_i("[SD] Sdv1 / MMCv3 ?");
 		uint8_t cmd;
