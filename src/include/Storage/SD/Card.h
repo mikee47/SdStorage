@@ -85,8 +85,6 @@ protected:
 private:
 	uint8_t init();
 	bool wait_ready();
-	void deselect();
-	bool select();
 	bool rcvr_datablock(void* buff, size_t btr);
 	bool xmit_datablock(const void* buff, uint8_t token);
 	uint8_t send_cmd(uint8_t cmd, uint32_t arg);

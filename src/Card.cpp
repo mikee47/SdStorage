@@ -106,36 +106,6 @@ bool Card::wait_ready() /* 1:OK, 0:Timeout */
 }
 
 /*
- * Deselect the card and release SPI bus
- */
-void Card::deselect()
-{
-	// digitalWrite(chipSelect, HIGH);
-	// spi.transfer(0xff); /* Send 0xFF Dummy clock (force DO hi-z for multiple slave SPI) */
-}
-
-/**
- * Select the card and wait for ready
- *
- * Returns true: OK, false: Timeout
- */
-bool Card::select()
-{
-	// digitalWrite(chipSelect, LOW);
-	/* Dummy clock (force DO enabled) */
-	HSPI::Request req;
-	req.out.set8(0xff);
-	spi.execute(req);
-	if(wait_ready()) {
-		return true;
-	}
-
-	debug_e("[SD] select() failed");
-	deselect();
-	return false;
-}
-
-/*
  * Receive a data packet from the card
  */
 bool Card::rcvr_datablock(void* buff, size_t btr)
@@ -224,15 +194,6 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg)
 		}
 	}
 
-	/* Select the card and wait for ready except to stop multiple block read */
-	if(cmd != CMD12) {
-		deselect();
-		if(!select()) {
-			debug_e("[SD] Select failed");
-			return 0xFF;
-		}
-	}
-
 	/* Send a command packet */
 	uint8_t crc;
 	if(cmd == CMD0) {
@@ -276,11 +237,8 @@ bool Card::begin(HSPI::PinSet pinSet, uint8_t chipSelect, uint32_t freq)
 		return false;
 	}
 
-	const uint32_t maxFreq{40000000U};
-	if(freq == 0 || freq > maxFreq) {
-		freq = maxFreq;
-	}
-	if(!spi.begin(pinSet, chipSelect, freq)) {
+	// Require low speed for initialisation
+	if(!spi.begin(pinSet, chipSelect, 400000)) {
 		debug_e("[SD] SPI init failed");
 		return false;
 	}
@@ -289,24 +247,26 @@ bool Card::begin(HSPI::PinSet pinSet, uint8_t chipSelect, uint32_t freq)
 	spi.setClockMode(HSPI::ClockMode::mode0);
 	spi.setIoMode(HSPI::IoMode::SPI);
 
-	delayMicroseconds(10000);
-
 	cardType = init();
 
 	if(cardType == 0) {
 		debug_e("[SD] init FAIL");
-	} else {
-		initialised = true;
-		debug_i("[SD] OK: TYPE %u", cardType);
+		return false;
 	}
 
-	deselect();
-
-	if(initialised) {
-		Disk::scanPartitions(*this);
+	// Adjust clock speed for normal operation
+	const uint32_t maxFreq{40000000U};
+	if(freq == 0 || freq > maxFreq) {
+		freq = maxFreq;
 	}
+	// spi.setClockSpeed(freq);
 
-	return initialised;
+	initialised = true;
+	debug_i("[SD] OK: TYPE %u", cardType);
+
+	Disk::scanPartitions(*this);
+
+	return true;
 }
 
 void Card::end()
@@ -323,8 +283,6 @@ uint8_t Card::init()
 	HSPI::Request req;
 	req.out.set(tmp, sizeof(tmp));
 	spi.execute(req);
-
-	//!! OK to here
 
 	// send n send_cmd(CMD0, 0)");
 	uint8_t retCmd;
@@ -476,7 +434,6 @@ bool Card::raw_sector_read(storage_size_t address, void* dst, size_t size)
 			send_cmd(CMD12, 0); /* STOP_TRANSMISSION */
 		}
 	}
-	deselect();
 
 	return size == 0;
 }
@@ -518,7 +475,6 @@ bool Card::raw_sector_write(storage_size_t address, const void* src, size_t size
 			}
 		}
 	}
-	deselect();
 
 	return size == 0;
 }
@@ -536,21 +492,12 @@ bool Card::raw_sector_erase_range(storage_size_t address, size_t size)
 	bool res =
 		send_cmd(CMD32, address) == 0 && send_cmd(CMD33, address + size - 1) == 0 && send_cmd(CMD38, 0x00000001) == 0;
 
-	deselect();
-
 	return res;
 }
 
 bool Card::raw_sync()
 {
-	if(!initialised) {
-		return false;
-	}
-
-	// Make sure that no pending write process
-	bool res = select();
-	deselect();
-	return res;
+	return true;
 }
 
 } // namespace Storage::SD
