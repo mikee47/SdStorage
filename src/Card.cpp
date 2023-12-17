@@ -181,6 +181,7 @@ bool Card::rcvr_datablock(void* buff, size_t btr)
 		delayMicroseconds(100);
 	}
 	if(req.in.data8 != TK_START_BLOCK_SINGLE) {
+		debug_e("SD RCV 0x%02x", req.in.data8);
 		return false; /* If not valid data token, return with error */
 	}
 
@@ -193,6 +194,8 @@ bool Card::rcvr_datablock(void* buff, size_t btr)
 	req.out.set16(0xffff);
 	req.in.set16(0);
 	spi.execute(req);
+
+	debug_hex(DBG, "SD RCV", buff, btr);
 
 	// Validate CRC
 	uint16_t crc = (req.in.data[0] << 8) | req.in.data[1];
@@ -255,6 +258,10 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg)
 		}
 	}
 
+	if(cmd != CMD12) {
+		HSPI::Request req;
+		req.out.set8(0xff);
+		spi.execute(req);
 	}
 
 	uint8_t buf[]{
@@ -272,6 +279,7 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg)
 	unsigned len = (cmd == CMD12) ? sizeof(buf) : (sizeof(buf) - 1);
 	auto crc = crc7(buf, 5);
 	buf[5] = (crc << 1) | 0x01;
+	// unsigned len = (cmd == CMD12 || cmd == CMD9) ? sizeof(buf) : (sizeof(buf) - 1);
 	HSPI::Request req;
 	req.out.set(buf, len);
 	req.in.set(buf, len);
@@ -284,6 +292,17 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg)
 
 	debug_d("[SD] send_cmd(%u): 0x%02x", cmd, d);
 	return d;
+}
+
+bool Card::send_cmd_with_retry(uint8_t cmd, uint32_t arg, uint8_t requiredResponse, unsigned maxAttempts)
+{
+	while(maxAttempts--) {
+		if(send_cmd(cmd, arg) == requiredResponse) {
+			return true;
+		}
+		delayMicroseconds(1000);
+	}
+	return false;
 }
 
 bool Card::begin(HSPI::PinSet pinSet, uint8_t chipSelect, uint32_t freq)
@@ -338,20 +357,16 @@ uint8_t Card::init()
 	memset(tmp, 0xff, sizeof(tmp));
 	HSPI::Request req;
 	req.out.set(tmp, sizeof(tmp));
+	req.nochipsel = 1; // Keep CS HIGH
 	spi.execute(req);
+	req.nochipsel = 0;
 
-	// send n send_cmd(CMD0, 0)");
-	uint8_t retCmd;
-	uint8_t n = 5;
-	do {
-		retCmd = send_cmd(CMD0, 0);
-		n--;
-	} while(n && retCmd != 1);
-
-	if(retCmd != 1) {
-		debug_e("[SD] ERROR: %x", retCmd);
+	if(!send_cmd_with_retry(CMD0, 0, 0x01, 5)) {
+		debug_e("[SD] ERROR CMD0");
 		return 0;
 	}
+
+	wait_ready();
 
 	uint8_t ty = 0;
 
@@ -370,18 +385,11 @@ uint8_t Card::init()
 		}
 
 		// Wait for leaving idle state (ACMD41 with HCS bit)
-		unsigned tmr;
-		for(tmr = 1000; tmr; tmr--) {
-			if(send_cmd(ACMD41, 1UL << 30) == 0) {
-				debug_d("[SD] ACMD41 OK");
-				break;
-			}
-			delayMicroseconds(1000);
-		}
-		if(tmr == 0) {
+		if(!send_cmd_with_retry(ACMD41, 1UL << 30, 0, 1000)) {
 			debug_e("[SD] ACMD41 FAIL");
 			return 0;
 		}
+		debug_d("[SD] ACMD41 OK");
 
 		// Check CCS bit in the OCR
 		if(send_cmd(CMD58, 0) != 0) {
@@ -395,6 +403,7 @@ uint8_t Card::init()
 		ty = (req.in.data[0] & 0x40) ? CT_SD2 | CT_BLOCK : CT_SD2; /* SDv2 */
 		debug_hex(DBG, "[SD] OCR", req.in.data, 4);
 	} else { /* SDv1 or MMCv3 */
+		wait_ready();
 		debug_i("[SD] Sdv1 / MMCv3 ?");
 		uint8_t cmd;
 		if(send_cmd(ACMD41, 0) <= 1) {
@@ -404,15 +413,8 @@ uint8_t Card::init()
 			ty = CT_MMC;
 			cmd = CMD1; /* MMCv3 */
 		}
-		unsigned tmr;
-		for(tmr = 1000; tmr; tmr--) { /* Wait for leaving idle state */
-			if(send_cmd(cmd, 0) == 0) {
-				break;
-			}
-			delayMicroseconds(1000);
-		}
-		if(tmr == 0) {
-			debug_i("[SD] tmr = 0");
+		if(!send_cmd_with_retry(cmd, 0, 0, 1000)) {
+			debug_i("[SD] cmd %u fail", cmd);
 			return 0;
 		}
 		/* Set R/W block length to 512 */
@@ -423,7 +425,43 @@ uint8_t Card::init()
 	}
 
 	// Get number of sectors on the disk
-	if(send_cmd(CMD9, 0) != 0 || !rcvr_datablock(&mCSD, sizeof(mCSD))) {
+	// req.out.set8(0xff);
+	// req.in.clear();
+	// spi.execute(req);
+
+	// const uint8_t cmd9_seq[]{
+	// 	uint8_t(0x40 | CMD9),
+	// 	0,
+	// 	0,
+	// 	0,
+	// 	0,
+	// 	0x01, // stop + dummy CRC
+	// 	0xff, // Dummy clock (force DO enabled)
+	// 	// Response
+	// 	0xff,
+	// 	0xff, // R1 (0)
+	// 	0xff,
+	// 	0xff, // <- fe TK_START_BLOCK_SINGLE
+	// 	// CSD
+	// 	// CRC
+	// };
+	// uint8_t buf[sizeof(cmd9_seq) + sizeof(mCSD) + 2];
+	// memset(buf, 0xff, sizeof(buf));
+	// memcpy(buf, cmd9_seq, sizeof(cmd9_seq));
+	// req.out.set(buf, sizeof(buf));
+	// req.in.set(buf, sizeof(buf));
+	// spi.execute(req);
+
+	// debug_hex(DBG, "SD CMD9 (CSD)", buf, sizeof(buf));
+
+	// if(buf[10] != 0xfe) {
+	// 	debug_e("[SD] Read CSD failed");
+	// }
+
+	// memcpy(&mCSD, buf + sizeof(cmd9_seq), sizeof(mCSD));
+
+	send_cmd(CMD9, 0);
+	if(!rcvr_datablock(&mCSD, sizeof(mCSD))) {
 		debug_e("[SD] Read CSD failed");
 		return 0;
 	}
