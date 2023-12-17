@@ -42,6 +42,11 @@ public:
 		end();
 	}
 
+	explicit operator bool() const
+	{
+		return initialised;
+	}
+
 	/**
 	 * @brief Initialise the card
 	 * @param chipSelect
