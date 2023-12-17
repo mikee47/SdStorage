@@ -284,6 +284,7 @@ bool Card::begin(HSPI::PinSet pinSet, uint8_t chipSelect, uint32_t freq)
 
 	if(cardType == 0) {
 		debug_e("[SD] init FAIL");
+		spi.end();
 		return false;
 	}
 
