@@ -14,6 +14,9 @@ Descr: Low-level SDCard functions
 
 namespace Storage::SD
 {
+uint8_t crc7(const void* data, size_t len);
+uint16_t crc16(uint16_t crc, const void* data, size_t len);
+
 class SpiDevice : public HSPI::Device
 {
 public:
@@ -88,11 +91,20 @@ protected:
 	bool raw_sync() override;
 
 private:
+	struct Response {
+		uint8_t data[16];
+
+		uint32_t u32()
+		{
+			return (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
+		}
+	};
+
 	uint8_t init();
 	bool wait_ready();
 	bool rcvr_datablock(void* buff, size_t btr);
 	bool xmit_datablock(const void* buff, uint8_t token);
-	uint8_t send_cmd(uint8_t cmd, uint32_t arg);
+	uint8_t send_cmd(uint8_t cmd, uint32_t arg, Response* response = nullptr);
 	bool send_cmd_with_retry(uint8_t cmd, uint32_t arg, uint8_t requiredResponse, unsigned maxAttempts);
 
 	CString name;

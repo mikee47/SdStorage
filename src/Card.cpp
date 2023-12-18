@@ -40,28 +40,39 @@ Descr: Low-level SDCard functions
 
 /* MMC/SD command (SPI mode) */
 enum Command : uint8_t {
-	CMD0 = 0,			// GO_IDLE_STATE
-	CMD1 = 1,			// SEND_OP_COND
-	ACMD41 = 0x80 | 41, // SEND_OP_COND (SDC)
-	CMD8 = 8,			// SEND_IF_COND
-	CMD9 = 9,			// SEND_CSD
-	CMD10 = 10,			// SEND_CID
-	CMD12 = 12,			// STOP_TRANSMISSION
-	CMD13 = 13,			// SEND_STATUS
-	ACMD13 = 0x80 | 13, // SD_STATUS (SDC)
-	CMD16 = 16,			// SET_BLOCKLEN
-	CMD17 = 17,			// READ_SINGLE_BLOCK
-	CMD18 = 18,			// READ_MULTIPLE_BLOCK
-	CMD23 = 23,			// SET_BLOCK_COUNT
-	ACMD23 = 0x80 | 23, // SET_WR_BLK_ERASE_COUNT (SDC)
-	CMD24 = 24,			// WRITE_BLOCK
-	CMD25 = 25,			// WRITE_MULTIPLE_BLOCK
-	CMD32 = 32,			// ERASE_ER_BLK_START
-	CMD33 = 33,			// ERASE_ER_BLK_END
-	CMD38 = 38,			// ERASE
-	CMD55 = 55,			// APP_CMD
-	CMD58 = 58,			// READ_OCR
+	CMD0 = 0,			// R1 GO_IDLE_STATE
+	CMD1 = 1,			// R1 SEND_OP_COND
+	ACMD41 = 0x80 | 41, // R1 SEND_OP_COND (SDC)
+	CMD8 = 8,			// R7 SEND_IF_COND
+	CMD9 = 9,			// R1 SEND_CSD
+	CMD10 = 10,			// R1 SEND_CID
+	CMD12 = 12,			// R1b STOP_TRANSMISSION
+	CMD13 = 13,			// R2 SEND_STATUS
+	ACMD13 = 0x80 | 13, // R2 SD_STATUS (SDC)
+	CMD16 = 16,			// R1 SET_BLOCKLEN
+	CMD17 = 17,			// R1 READ_SINGLE_BLOCK
+	CMD18 = 18,			// R1 READ_MULTIPLE_BLOCK
+	CMD23 = 23,			// ?  SET_BLOCK_COUNT
+	ACMD23 = 0x80 | 23, // R1 SET_WR_BLK_ERASE_COUNT (SDC)
+	CMD24 = 24,			// R1 WRITE_BLOCK
+	CMD25 = 25,			// R1 WRITE_MULTIPLE_BLOCK
+	CMD32 = 32,			// R1 ERASE_ER_BLK_START
+	CMD33 = 33,			// R1 ERASE_ER_BLK_END
+	CMD38 = 38,			// R1b ERASE
+	CMD55 = 55,			// R1 APP_CMD
+	CMD58 = 58,			// R3 READ_OCR
 };
+
+/* Responses
+
+	Type	Length (bytes)
+	R1		1
+	R1b		1 with busy
+	R2		2
+	R3		5 R1 + 4 bytes
+	R7		5 R1 + 4 bytes
+
+ */
 
 /* MMC card type flags (MMC_GET_TYPE) */
 enum CardType {
@@ -198,8 +209,10 @@ bool Card::rcvr_datablock(void* buff, size_t btr)
 	debug_hex(DBG, "SD RCV", buff, btr);
 
 	// Validate CRC
-	uint16_t crc = (req.in.data[0] << 8) | req.in.data[1];
-	return crc == crc16(0, buff, btr);
+	uint16_t crcRx = (req.in.data[0] << 8) | req.in.data[1];
+	uint16_t crcCalc = crc16(0, buff, btr);
+	debug_d("SD CRC 0x%04x, rx 0x%04x", crcCalc, crcRx);
+	return crcRx == crcCalc;
 }
 
 /*
@@ -247,7 +260,7 @@ bool Card::xmit_datablock(const void* buff, uint8_t token)
  *
  * Returns Command response (bit7: Send failed)
  */
-uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg)
+uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg, Response* response)
 {
 	if(cmd & 0x80) { /* ACMD<n> is the command sequence of CMD55-CMD<n> */
 		cmd &= 0x7F;
@@ -258,13 +271,16 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg)
 		}
 	}
 
-	if(cmd != CMD12) {
-		HSPI::Request req;
-		req.out.set8(0xff);
-		spi.execute(req);
-	}
-
-	uint8_t buf[]{
+	/*
+		CID/CSD responses and READ commands have an additional stuffing/delay byte at the start,
+		i.e. ff 01 instead of 01.
+		This is followed by ff fe (for start of data block) then 16 bytes then 2 byte CRC.
+		If this isn't done in the same transaction then bit 7 of the first response byte gets
+		set which corrupts the data.
+		We'll therefore need a larger buffer, best to allocate that as a class member.
+	*/
+	uint8_t buf[9 + 21]{
+		0xff,
 		uint8_t(0x40 | cmd), // Start + Command index
 		uint8_t(arg >> 24),  // Argument[31..24]
 		uint8_t(arg >> 16),  // Argument[23..16]
@@ -275,11 +291,22 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg)
 		// Response
 		0xff,
 		0xff,
+		0xff,
+		0xff,
 	};
-	unsigned len = (cmd == CMD12) ? sizeof(buf) : (sizeof(buf) - 1);
-	auto crc = crc7(buf, 5);
-	buf[5] = (crc << 1) | 0x01;
-	// unsigned len = (cmd == CMD12 || cmd == CMD9) ? sizeof(buf) : (sizeof(buf) - 1);
+	auto crc = crc7(&buf[1], 5);
+	buf[6] = (crc << 1) | 0x01;
+	unsigned len = 9;
+	if(cmd == CMD8 || cmd == CMD58) {
+		len += 4;
+	} else if(cmd == CMD13) {
+		len += 1;
+	} else if(cmd == CMD9 || cmd == CMD10) {
+		len += 21;
+		memset(&buf[9], 0xff, 21);
+	} else if(cmd == CMD17) {
+		len += 1;
+	}
 	HSPI::Request req;
 	req.out.set(buf, len);
 	req.in.set(buf, len);
@@ -288,9 +315,28 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg)
 	spi.execute(req);
 	debug_hex(DBG, "SPI < ", buf, len);
 
-	auto d = buf[len - 1];
+	Response rsp{};
+	unsigned i = 8;
+	uint8_t d = buf[i++];
+	if(cmd == CMD9 || cmd == CMD10) {
+		if(d & 0x80) {
+			d = buf[i++];
+		}
+		memcpy(rsp.data, &buf[i + 2], 16);
+	} else if(cmd == CMD17) {
+		if(d & 0x80) {
+			d = buf[i++];
+		}
+	} else {
+		memcpy(rsp.data, &buf[i], len - 9);
+	}
+
+	if(response) {
+		*response = rsp;
+	}
 
 	debug_d("[SD] send_cmd(%u): 0x%02x", cmd, d);
+	debug_hex(DBG, "[SD] RSP", &rsp, sizeof(rsp));
 	return d;
 }
 
@@ -357,9 +403,9 @@ uint8_t Card::init()
 	memset(tmp, 0xff, sizeof(tmp));
 	HSPI::Request req;
 	req.out.set(tmp, sizeof(tmp));
-	req.nochipsel = 1; // Keep CS HIGH
+	req.chipsel = 0; // Keep CS HIGH
 	spi.execute(req);
-	req.nochipsel = 0;
+	req.chipsel = 1;
 
 	if(!send_cmd_with_retry(CMD0, 0, 0x01, 5)) {
 		debug_e("[SD] ERROR CMD0");
@@ -370,16 +416,14 @@ uint8_t Card::init()
 
 	uint8_t ty = 0;
 
-	if(send_cmd(CMD8, 0x1AA) == 0x01) { /* SDv2? */
-		req.out.set32(0xffffffff);
-		req.in.set32(0);
-		spi.execute(req);
-
+	Response rsp;
+	if(send_cmd(CMD8, 0x1AA, &rsp) == 0x01) { /* SDv2? */
 		debug_d("[SD] Sdv2 ?");
-		debug_hex(DBG, "[SD] IF COND", req.in.data, 4);
+		uint32_t ifcond = rsp.u32();
+		debug_d("[SD] IF COND 0x%08x", ifcond);
 
 		// Check card can work at vdd range of 2.7-3.6V
-		if(req.in.data[2] != 0x01 || req.in.data[3] != 0xAA) {
+		if((ifcond & 0xffff) != 0x01aa) {
 			debug_e("[SD] VDD invalid");
 			return 0;
 		}
@@ -392,16 +436,14 @@ uint8_t Card::init()
 		debug_d("[SD] ACMD41 OK");
 
 		// Check CCS bit in the OCR
-		if(send_cmd(CMD58, 0) != 0) {
+		if(send_cmd(CMD58, 0, &rsp) != 0) {
 			debug_e("[SD] OCR read failed");
 			return 0;
 		}
 
-		req.out.set32(0xffffffff);
-		req.in.set32(0);
-		spi.execute(req);
-		ty = (req.in.data[0] & 0x40) ? CT_SD2 | CT_BLOCK : CT_SD2; /* SDv2 */
-		debug_hex(DBG, "[SD] OCR", req.in.data, 4);
+		uint32_t ocr = rsp.u32();
+		ty = (ocr & 0x40000000) ? CT_SD2 | CT_BLOCK : CT_SD2; /* SDv2 */
+		debug_d("[SD] OCR 0x%08x", ocr);
 	} else { /* SDv1 or MMCv3 */
 		wait_ready();
 		debug_i("[SD] Sdv1 / MMCv3 ?");
@@ -460,11 +502,11 @@ uint8_t Card::init()
 
 	// memcpy(&mCSD, buf + sizeof(cmd9_seq), sizeof(mCSD));
 
-	send_cmd(CMD9, 0);
-	if(!rcvr_datablock(&mCSD, sizeof(mCSD))) {
+	if(send_cmd(CMD9, 0, &rsp) != 0) {
 		debug_e("[SD] Read CSD failed");
 		return 0;
 	}
+	memcpy(&mCSD, &rsp, sizeof(CSD));
 	mCSD.bswap();
 
 	uint64_t size = mCSD.getSize();
@@ -480,10 +522,11 @@ uint8_t Card::init()
 		return 0;
 	}
 
-	if(send_cmd(CMD10, 0) != 0 || !rcvr_datablock(&mCID, sizeof(mCID))) {
+	if(send_cmd(CMD10, 0, &rsp) != 0) {
 		debug_e("[SD] Read CID failed");
 		return 0;
 	}
+	memcpy(&mCID, &rsp, sizeof(CID));
 	mCID.bswap();
 
 	return ty;
