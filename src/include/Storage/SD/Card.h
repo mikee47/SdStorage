@@ -93,7 +93,7 @@ protected:
 private:
 	static constexpr size_t maxWaitBytes{512};
 	struct __attribute__((packed)) Buffer {
-		uint8_t idle;
+		uint8_t idle[8];
 		uint8_t cmd;
 		uint32_t arg;
 		uint8_t crcAndStop;

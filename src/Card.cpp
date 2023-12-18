@@ -291,7 +291,7 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg, void* response, size_t respons
 	if(cmd == CMD8 || cmd == CMD58) {
 		len += 4;
 	} else if(cmd == CMD13) {
-		len += 1;
+		len += 1 + 1 + maxWaitBytes + 64 + 2;
 	} else if(cmd == CMD9 || cmd == CMD10) {
 		len += 1 + 2 + 16 + 2;
 	} else if(cmd == CMD17) {
@@ -307,9 +307,12 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg, void* response, size_t respons
 
 	unsigned i = 0;
 	uint8_t d = buffer.data[i++];
-	if(cmd == CMD9 || cmd == CMD10 || cmd == CMD17) {
+	if(cmd == CMD9 || cmd == CMD10 || cmd == CMD17 || cmd == CMD13) {
 		if(d & 0x80) {
 			d = buffer.data[i++];
+		}
+		if(cmd == CMD13) {
+			++i; // 2 status bytes
 		}
 		while(i < (2 + maxWaitBytes) && buffer.data[i] == 0xff) {
 			++i;
@@ -320,6 +323,9 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg, void* response, size_t respons
 		uint16_t crcRx = (buffer.data[i + responseSize] << 8) | buffer.data[i + responseSize + 1];
 		uint16_t crcCalc = crc16(0, &buffer.data[i], responseSize);
 		debug_d("SD CRC 0x%04x, rx 0x%04x", crcCalc, crcRx);
+		if(crcCalc != crcRx) {
+			d = 0xff;
+		}
 	}
 	if(response) {
 		memcpy(response, &buffer.data[i], responseSize);
@@ -479,6 +485,9 @@ uint8_t Card::init()
 		return 0;
 	}
 	mCID.bswap();
+
+	uint8_t status[64];
+	send_cmd(ACMD13, 0, status, sizeof(status));
 
 	return ty;
 } // namespace Storage::SD
