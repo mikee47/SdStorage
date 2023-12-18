@@ -260,7 +260,7 @@ bool Card::xmit_datablock(const void* buff, uint8_t token)
  *
  * Returns Command response (bit7: Send failed)
  */
-uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg, Response* response)
+uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg, void* response, size_t responseSize)
 {
 	if(cmd & 0x80) { /* ACMD<n> is the command sequence of CMD55-CMD<n> */
 		cmd &= 0x7F;
@@ -278,65 +278,54 @@ uint8_t Card::send_cmd(uint8_t cmd, uint32_t arg, Response* response)
 		If this isn't done in the same transaction then bit 7 of the first response byte gets
 		set which corrupts the data.
 		We'll therefore need a larger buffer, best to allocate that as a class member.
+
+		maxWaitBytes is going to be partly dependent on clock speed
 	*/
-	uint8_t buf[9 + 21]{
-		0xff,
-		uint8_t(0x40 | cmd), // Start + Command index
-		uint8_t(arg >> 24),  // Argument[31..24]
-		uint8_t(arg >> 16),  // Argument[23..16]
-		uint8_t(arg >> 8),   // Argument[15..8]
-		uint8_t(arg),		 // Argument[7..0]
-		0,					 // CRC (fill in later)
-		0xff,				 // Dummy clock (force DO enabled)
-		// Response
-		0xff,
-		0xff,
-		0xff,
-		0xff,
-	};
-	auto crc = crc7(&buf[1], 5);
-	buf[6] = (crc << 1) | 0x01;
-	unsigned len = 9;
+	Buffer buffer;
+	memset(&buffer, 0xff, sizeof(buffer));
+	buffer.cmd = 0x40 | cmd;
+	buffer.arg = HSPI::bswap32(arg);
+	auto crc = crc7(&buffer.cmd, 5);
+	buffer.crcAndStop = (crc << 1) | 0x01;
+	unsigned len = offsetof(Buffer, data) + 1;
 	if(cmd == CMD8 || cmd == CMD58) {
 		len += 4;
 	} else if(cmd == CMD13) {
 		len += 1;
 	} else if(cmd == CMD9 || cmd == CMD10) {
-		len += 21;
-		memset(&buf[9], 0xff, 21);
+		len += 1 + 2 + 16 + 2;
 	} else if(cmd == CMD17) {
-		len += 1;
+		len += 1 + 2 + maxWaitBytes + 512 + 2;
 	}
 	HSPI::Request req;
-	req.out.set(buf, len);
-	req.in.set(buf, len);
+	req.out.set(&buffer, len);
+	req.in.set(&buffer, len);
 
-	debug_hex(DBG, "SPI > ", buf, len);
+	debug_hex(DBG, "SPI > ", &buffer, len);
 	spi.execute(req);
-	debug_hex(DBG, "SPI < ", buf, len);
+	debug_hex(DBG, "SPI < ", &buffer, len);
 
-	Response rsp{};
-	unsigned i = 8;
-	uint8_t d = buf[i++];
-	if(cmd == CMD9 || cmd == CMD10) {
+	unsigned i = 0;
+	uint8_t d = buffer.data[i++];
+	if(cmd == CMD9 || cmd == CMD10 || cmd == CMD17) {
 		if(d & 0x80) {
-			d = buf[i++];
+			d = buffer.data[i++];
 		}
-		memcpy(rsp.data, &buf[i + 2], 16);
-	} else if(cmd == CMD17) {
-		if(d & 0x80) {
-			d = buf[i++];
+		while(i < (2 + maxWaitBytes) && buffer.data[i] == 0xff) {
+			++i;
 		}
-	} else {
-		memcpy(rsp.data, &buf[i], len - 9);
+		++i; // Skip 0xfe
+
+		// Validate CRC
+		uint16_t crcRx = (buffer.data[i + responseSize] << 8) | buffer.data[i + responseSize + 1];
+		uint16_t crcCalc = crc16(0, &buffer.data[i], responseSize);
+		debug_d("SD CRC 0x%04x, rx 0x%04x", crcCalc, crcRx);
 	}
-
 	if(response) {
-		*response = rsp;
+		memcpy(response, &buffer.data[i], responseSize);
 	}
 
 	debug_d("[SD] send_cmd(%u): 0x%02x", cmd, d);
-	debug_hex(DBG, "[SD] RSP", &rsp, sizeof(rsp));
 	return d;
 }
 
@@ -416,10 +405,10 @@ uint8_t Card::init()
 
 	uint8_t ty = 0;
 
-	Response rsp;
-	if(send_cmd(CMD8, 0x1AA, &rsp) == 0x01) { /* SDv2? */
+	uint32_t ifcond;
+	if(send_cmd(CMD8, 0x1AA, &ifcond, sizeof(ifcond)) == 0x01) { /* SDv2? */
 		debug_d("[SD] Sdv2 ?");
-		uint32_t ifcond = rsp.u32();
+		ifcond = HSPI::bswap32(ifcond);
 		debug_d("[SD] IF COND 0x%08x", ifcond);
 
 		// Check card can work at vdd range of 2.7-3.6V
@@ -436,12 +425,12 @@ uint8_t Card::init()
 		debug_d("[SD] ACMD41 OK");
 
 		// Check CCS bit in the OCR
-		if(send_cmd(CMD58, 0, &rsp) != 0) {
+		uint32_t ocr;
+		if(send_cmd(CMD58, 0, &ocr, sizeof(ocr)) != 0) {
 			debug_e("[SD] OCR read failed");
 			return 0;
 		}
-
-		uint32_t ocr = rsp.u32();
+		ocr = HSPI::bswap32(ocr);
 		ty = (ocr & 0x40000000) ? CT_SD2 | CT_BLOCK : CT_SD2; /* SDv2 */
 		debug_d("[SD] OCR 0x%08x", ocr);
 	} else { /* SDv1 or MMCv3 */
@@ -466,47 +455,10 @@ uint8_t Card::init()
 		}
 	}
 
-	// Get number of sectors on the disk
-	// req.out.set8(0xff);
-	// req.in.clear();
-	// spi.execute(req);
-
-	// const uint8_t cmd9_seq[]{
-	// 	uint8_t(0x40 | CMD9),
-	// 	0,
-	// 	0,
-	// 	0,
-	// 	0,
-	// 	0x01, // stop + dummy CRC
-	// 	0xff, // Dummy clock (force DO enabled)
-	// 	// Response
-	// 	0xff,
-	// 	0xff, // R1 (0)
-	// 	0xff,
-	// 	0xff, // <- fe TK_START_BLOCK_SINGLE
-	// 	// CSD
-	// 	// CRC
-	// };
-	// uint8_t buf[sizeof(cmd9_seq) + sizeof(mCSD) + 2];
-	// memset(buf, 0xff, sizeof(buf));
-	// memcpy(buf, cmd9_seq, sizeof(cmd9_seq));
-	// req.out.set(buf, sizeof(buf));
-	// req.in.set(buf, sizeof(buf));
-	// spi.execute(req);
-
-	// debug_hex(DBG, "SD CMD9 (CSD)", buf, sizeof(buf));
-
-	// if(buf[10] != 0xfe) {
-	// 	debug_e("[SD] Read CSD failed");
-	// }
-
-	// memcpy(&mCSD, buf + sizeof(cmd9_seq), sizeof(mCSD));
-
-	if(send_cmd(CMD9, 0, &rsp) != 0) {
+	if(send_cmd(CMD9, 0, &mCSD, sizeof(mCSD)) != 0) {
 		debug_e("[SD] Read CSD failed");
 		return 0;
 	}
-	memcpy(&mCSD, &rsp, sizeof(CSD));
 	mCSD.bswap();
 
 	uint64_t size = mCSD.getSize();
@@ -522,11 +474,10 @@ uint8_t Card::init()
 		return 0;
 	}
 
-	if(send_cmd(CMD10, 0, &rsp) != 0) {
+	if(send_cmd(CMD10, 0, &mCID, sizeof(mCID)) != 0) {
 		debug_e("[SD] Read CID failed");
 		return 0;
 	}
-	memcpy(&mCID, &rsp, sizeof(CID));
 	mCID.bswap();
 
 	return ty;
@@ -542,16 +493,17 @@ bool Card::raw_sector_read(storage_size_t address, void* dst, size_t size)
 	}
 
 	uint8_t cmd = (size > 1) ? CMD18 : CMD17; /*  READ_MULTIPLE_BLOCK : READ_SINGLE_BLOCK */
-	if(send_cmd(cmd, address) == 0) {
-		for(auto bufptr = static_cast<uint8_t*>(dst); size != 0; --size, bufptr += sectorSize) {
-			if(!rcvr_datablock(bufptr, sectorSize)) {
-				debug_e("[SD] rcvr error");
-				break;
-			}
-		}
-		if(cmd == CMD18) {
-			send_cmd(CMD12, 0); /* STOP_TRANSMISSION */
-		}
+	if(send_cmd(cmd, address, dst, sectorSize) == 0) {
+		--size;
+		// for(auto bufptr = static_cast<uint8_t*>(dst); size != 0; --size, bufptr += sectorSize) {
+		// 	if(!rcvr_datablock(bufptr, sectorSize)) {
+		// 		debug_e("[SD] rcvr error");
+		// 		break;
+		// 	}
+		// }
+		// if(cmd == CMD18) {
+		// 	send_cmd(CMD12, 0); /* STOP_TRANSMISSION */
+		// }
 	}
 
 	return size == 0;

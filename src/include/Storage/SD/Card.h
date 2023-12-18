@@ -91,20 +91,27 @@ protected:
 	bool raw_sync() override;
 
 private:
-	struct Response {
-		uint8_t data[16];
-
-		uint32_t u32()
-		{
-			return (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
-		}
+	static constexpr size_t maxWaitBytes{512};
+	struct __attribute__((packed)) Buffer {
+		uint8_t idle;
+		uint8_t cmd;
+		uint32_t arg;
+		uint8_t crcAndStop;
+		uint8_t dummy1;
+		uint8_t data[1 + 2 + maxWaitBytes + 512 + 2]; // 0xff, 0xff 0xfe, data, crc
+		// Read data commands
+		// uint8_t dummy2;
+		// uint8_t idle2;
+		// uint8_t token; // TK_START_BLOCK_SINGLE
+		// uint8_t data[512];
+		// uint16_t crc;
 	};
 
 	uint8_t init();
 	bool wait_ready();
 	bool rcvr_datablock(void* buff, size_t btr);
 	bool xmit_datablock(const void* buff, uint8_t token);
-	uint8_t send_cmd(uint8_t cmd, uint32_t arg, Response* response = nullptr);
+	uint8_t send_cmd(uint8_t cmd, uint32_t arg, void* response = nullptr, size_t responseSize = 0);
 	bool send_cmd_with_retry(uint8_t cmd, uint32_t arg, uint8_t requiredResponse, unsigned maxAttempts);
 
 	CString name;
